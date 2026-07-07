@@ -61,10 +61,13 @@ export async function createLayout(
   customerLogoMime?: 'image/png' | 'image/jpeg' | null,
 ): Promise<Layout> {
   const doc = await PDFDocument.create()
+  // NB: full metadata (incl. per-customer title + keywords) is set later in
+  // setDocumentMetadata. These are neutral defaults — never the internal
+  // "Quill" name, which must not appear in any customer-facing document.
   doc.setTitle(title)
-  doc.setAuthor('SurveySparrow Inc.')
+  doc.setAuthor('SurveySparrow')
   doc.setSubject('Service Order Form')
-  doc.setCreator('Quill · SurveySparrow Service Order Form Generator')
+  doc.setCreator('SurveySparrow')
 
   const fonts = await loadFonts(doc)
   const ssLogo = await loadSurveySparrowLogo(doc)

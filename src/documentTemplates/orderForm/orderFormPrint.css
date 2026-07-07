@@ -1,0 +1,163 @@
+/*
+ * Order Form print/document styles.
+ *
+ * Reusable, template-scoped classes (prefixed `odoc-`) for the HTML/CSS order
+ * form. These complement the base `.doc*` classes in styles.css (typography,
+ * fields, tables, section numbers) and add the card / legal / summary / page
+ * treatments plus print page-break controls.
+ *
+ * The document is always LIGHT — it represents customer-facing paper and never
+ * consumes the app's theme variables, in either preview or a future headless
+ * (Playwright/Chromium) render. See docs/html-css-pdf-engine.md.
+ */
+
+:root {
+  /* US Letter page geometry — used by the future headless print pipeline and
+     documented here as the canonical page model. */
+  --odoc-page-width: 8.5in;
+  --odoc-page-height: 11in;
+  --odoc-page-margin: 0.6in;
+  --odoc-accent: rgb(60, 166, 179);
+  --odoc-accent-deep: rgb(15, 163, 181);
+  --odoc-ink: rgb(15, 23, 42);
+  --odoc-muted: rgb(100, 116, 139);
+  --odoc-line: rgb(226, 232, 240);
+}
+
+/* Keep a section's heading with its opening content; avoid orphaned headers. */
+.odoc-section {
+  break-inside: auto;
+}
+.odoc-section > .flex {
+  break-after: avoid;
+}
+
+/* Payment / info callout — a subtle tinted strip, not a loud banner. */
+.odoc-callout {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--odoc-accent);
+  background: rgba(60, 166, 179, 0.06);
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: rgb(71, 85, 105);
+}
+
+/* Framed cards (billing/shipping, subscription, signature blocks). */
+.odoc-card {
+  border: 1px solid var(--odoc-line);
+  border-radius: 8px;
+  padding: 12px;
+  break-inside: avoid;
+}
+.odoc-card-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--odoc-accent-deep);
+}
+
+/* Legal terms — readable, formal, never marketing-y. */
+.odoc-clause {
+  break-inside: avoid;
+}
+.odoc-clause-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--odoc-ink);
+  break-after: avoid;
+}
+.odoc-legal {
+  font-size: 10.5px;
+  line-height: 1.6;
+  margin-top: 3px;
+  color: rgb(71, 85, 105);
+  text-align: justify;
+}
+
+/* Commercial summary card. */
+.odoc-summary {
+  border: 1px solid var(--odoc-line);
+  border-radius: 10px;
+  background: rgb(248, 250, 252);
+  padding: 12px 14px;
+  break-inside: avoid;
+}
+.odoc-summary-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--odoc-accent-deep);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--odoc-line);
+  margin-bottom: 8px;
+}
+.odoc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 14px;
+}
+.odoc-summary-cell--wide {
+  grid-column: 1 / -1;
+}
+.odoc-summary-cell-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--odoc-muted);
+}
+.odoc-summary-cell-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--odoc-ink);
+  margin-top: 2px;
+}
+.odoc-summary-cell-value--total {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--odoc-accent-deep);
+}
+
+/* End-of-document marker. */
+.odoc-endmark {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgb(148, 163, 184);
+}
+.odoc-endmark::before,
+.odoc-endmark::after {
+  content: '';
+  display: inline-block;
+  width: 40px;
+  height: 1px;
+  vertical-align: middle;
+  margin: 0 10px;
+  background: var(--odoc-line);
+}
+
+/*
+ * Print rules — active when the template is rendered to paper/PDF by a headless
+ * engine. Harmless in the on-screen preview (screen media ignores @page).
+ */
+@media print {
+  @page {
+    size: var(--odoc-page-width) var(--odoc-page-height);
+    margin: var(--odoc-page-margin);
+  }
+  .odoc {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .odoc-section {
+    break-inside: avoid-page;
+  }
+}

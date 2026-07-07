@@ -31,7 +31,7 @@ import {
 import type { OrderFormData, Signature } from '@/state/types'
 import { buildDocModel, type DocModel } from '@/lib/docModel'
 import { formatDate } from '@/lib/format'
-import { TERMS } from '@/lib/terms'
+import { buildTerms, type TermClause } from '@/lib/terms'
 
 const TEAL = '3CA6B3'
 const TEAL_DEEP = '0FA3B5'
@@ -48,10 +48,10 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
   const m = buildDocModel(data)
 
   const ssLogo = await fetchImage('/surveysparrow-logo.png', 5.797) // 800×138 px
-  // Word/Google Docs don't reliably support a positioned full-page background
-  // image via the OOXML this library emits, so we echo the PDF's brand feel
-  // with a slim full-width banner strip at the top of page 1 instead.
-  const banner = await fetchBanner('/docx-banner.jpg')
+  // No decorative banner/background image in the DOCX: Word/Google Docs render
+  // positioned images unreliably, and the DOCX is optimised for editing and
+  // legal redlining, not for mirroring the PDF's cover art. A clean header
+  // table (logo + CONFIDENTIAL + Doc ID) carries the branding instead.
   const customerLogo = decodeAsset(data.customerLogo?.dataUrl, data.customerLogo?.width, data.customerLogo?.height)
   const customerSig =
     data.signature.customer.type === 'image'
@@ -70,9 +70,14 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
         )
       : null
 
+  const customerName = m.customer.legalName || 'Draft'
   const doc = new Document({
-    creator: 'Quill · SurveySparrow',
-    title: `SurveySparrow Order Form – ${m.customer.legalName || 'Draft'}`,
+    creator: 'SurveySparrow',
+    title: `Service Order Form - ${customerName}`,
+    subject: 'Service Order Form',
+    description: `SurveySparrow Service Order Form for ${customerName} · Doc ID ${m.documentId}`,
+    keywords: `SurveySparrow, Order Form, ${customerName}, ${m.documentId}`,
+    lastModifiedBy: 'SurveySparrow',
     styles: {
       default: {
         document: {
@@ -107,20 +112,6 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
           }),
         },
         children: [
-          ...(banner
-            ? [
-                new Paragraph({
-                  spacing: { after: 80 },
-                  children: [
-                    new ImageRun({
-                      type: 'jpg',
-                      data: banner,
-                      transformation: { width: 624, height: 123 },
-                    }),
-                  ],
-                }),
-              ]
-            : []),
           buildHeaderTable(ssLogo, customerLogo, m),
           new Paragraph({ spacing: { after: 120 }, children: [] }),
           new Paragraph({
@@ -171,7 +162,7 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
             spacing: { before: 100 },
             children: [
               new TextRun({
-                text: 'Payable within 30 days upon the receipt of invoice.',
+                text: m.payableNote,
                 italics: true,
                 size: 18,
                 color: SLATE_700,
@@ -179,7 +170,7 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
             ],
           }),
           ...sectionHeading('06', 'Terms & Conditions'),
-          ...termsParagraphs(),
+          ...termsParagraphs(buildTerms(data.subscription.paymentTermDays ?? 30, data.termOverrides ?? {})),
           ...sectionHeading('07', 'Execution / Signature', true),
           new Paragraph({
             spacing: { after: 100 },
@@ -192,8 +183,11 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
             ],
           }),
           signatureTable(data.signature.customer, data.signature.surveysparrow, customerSig, ssSig, m),
-          ...sectionHeading('08', 'Purchase Order'),
+          ...sectionHeading('08', 'Acceptance & Purchase Order'),
+          commercialSummaryTable(m),
+          new Paragraph({ spacing: { after: 120 }, children: [] }),
           purchaseOrderTable(m),
+          closingMarker(),
         ],
       },
     ],
@@ -213,17 +207,6 @@ async function fetchImage(url: string, ratio: number): Promise<EmbeddedImage | n
     const bytes = new Uint8Array(await res.arrayBuffer())
     const height = 26
     return { bytes, kind: 'png', width: Math.round(height * ratio), height }
-  } catch {
-    return null
-  }
-}
-
-/** Raw bytes for the top banner strip; null when the asset isn't deployed. */
-async function fetchBanner(url: string): Promise<Uint8Array | null> {
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return null
-    return new Uint8Array(await res.arrayBuffer())
   } catch {
     return null
   }
@@ -273,6 +256,10 @@ function sectionHeading(num: string, title: string, breakBefore = false): Paragr
     new Paragraph({
       pageBreakBefore: breakBefore,
       spacing: { before: 280, after: 80 },
+      // outlineLevel (NOT heading:/HeadingLevel) surfaces every section in
+      // Word's Navigation pane + any generated TOC while preserving this
+      // custom heading's look (teal number + bottom border) exactly.
+      outlineLevel: 1,
       border: {
         bottom: { color: TEAL, style: BorderStyle.SINGLE, size: 10, space: 6 },
       },
@@ -507,9 +494,9 @@ function addressCell(label: string, name: string, address: string): TableCell {
   })
 }
 
-function termsParagraphs(): Paragraph[] {
+function termsParagraphs(terms: TermClause[]): Paragraph[] {
   const out: Paragraph[] = []
-  TERMS.forEach((t) => {
+  terms.forEach((t) => {
     out.push(
       new Paragraph({
         spacing: { before: 180, after: 60 },
@@ -638,6 +625,109 @@ function kvLine(label: string, value: string): Paragraph {
         bold: !!value,
         size: 18,
         color: value ? SLATE_950 : SLATE_500,
+      }),
+    ],
+  })
+}
+
+/**
+ * Commercial Summary card — mirrors the PDF's `drawCommercialSummary` and the
+ * preview's `.odoc-summary`: a bordered card with the customer on a full-width
+ * row, then a 3×2 grid of key terms, Total emphasised (largest, TEAL_DEEP).
+ * All values come straight from the doc model (no recomputation).
+ */
+function commercialSummaryTable(m: DocModel): Table {
+  const term = m.subscription.termMonths ? `${m.subscription.termMonths} months` : '—'
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: [3120, 3120, 3120],
+    borders: allBorders(SLATE_200, 4),
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            columnSpan: 3,
+            shading: { fill: TEAL_WASH },
+            margins: CELL_MARGINS,
+            children: [
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: 'COMMERCIAL SUMMARY',
+                    bold: true,
+                    size: 15,
+                    color: TEAL_DEEP,
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+      new TableRow({
+        children: [summaryCell('Customer', m.customer.legalName || '—', { span: 3 })],
+      }),
+      new TableRow({
+        children: [
+          summaryCell('Total', m.totalLabel, { emphasize: true }),
+          summaryCell('Currency', m.currencyCode),
+          summaryCell('Billing Period', m.subscription.billingPeriod),
+        ],
+      }),
+      new TableRow({
+        children: [
+          summaryCell('Subscription Term', term),
+          summaryCell('Start Date', m.subscription.startDate || '—'),
+          summaryCell('Valid Through', m.customer.pricingValidThrough || '—'),
+        ],
+      }),
+    ],
+  })
+}
+
+function summaryCell(
+  label: string,
+  value: string,
+  opts: { span?: number; emphasize?: boolean } = {},
+): TableCell {
+  const empty = !value || value === '—'
+  return new TableCell({
+    columnSpan: opts.span,
+    margins: CELL_MARGINS,
+    children: [
+      new Paragraph({
+        spacing: { after: 40 },
+        children: [
+          new TextRun({ text: label.toUpperCase(), bold: true, size: 13, color: SLATE_500 }),
+        ],
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: value || '—',
+            bold: !empty,
+            size: opts.emphasize ? 26 : 20,
+            color: empty ? SLATE_500 : opts.emphasize ? TEAL_DEEP : SLATE_950,
+          }),
+        ],
+      }),
+    ],
+  })
+}
+
+/** Centered, letter-spaced "END OF ORDER FORM" — mirrors the PDF's closing mark. */
+function closingMarker(): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 320, after: 120 },
+    children: [
+      new TextRun({
+        text: 'END OF ORDER FORM',
+        bold: true,
+        size: 15,
+        color: SLATE_500,
+        characterSpacing: 60,
       }),
     ],
   })

@@ -48,6 +48,17 @@ export type OrderFormData = {
   documentId: string
   currency: CurrencyCode
   customerLogo: ImageAsset | null
+  /**
+   * QA warnings the user has intentionally acknowledged. Maps a check id to the
+   * dependency-key that was current when it was ignored — if the underlying
+   * fields change, the key no longer matches and the warning re-surfaces.
+   */
+  ignoredWarnings: Record<string, string>
+  /**
+   * Per-document overrides for the locked legal text: clause id → paragraphs.
+   * Never mutates the canonical BASE_TERMS template; empty map = standard text.
+   */
+  termOverrides: Record<string, string[]>
   customer: {
     legalName: string
     orderFormDate: string
@@ -69,6 +80,9 @@ export type OrderFormData = {
     termMonths: string
     startDate: string
     paymentMethod: PaymentMethod
+    /** Net payment term in days (15 | 30 | 45 | 60). Drives the payment callout
+     *  AND Payment Terms clause 3 from one value so they can never disagree. */
+    paymentTermDays: number
   }
   signature: {
     customer: Signature
@@ -119,6 +133,8 @@ export const defaultData = (): OrderFormData => ({
   documentId: newDocumentId(),
   currency: 'USD',
   customerLogo: null,
+  ignoredWarnings: {},
+  termOverrides: {},
   customer: {
     legalName: '',
     orderFormDate: '',
@@ -137,6 +153,7 @@ export const defaultData = (): OrderFormData => ({
     termMonths: '12',
     startDate: '',
     paymentMethod: 'ACH / Bank Transfer',
+    paymentTermDays: 30,
   },
   signature: {
     customer: blankSignature(),

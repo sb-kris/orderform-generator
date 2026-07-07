@@ -57,6 +57,14 @@ type StoreValue = {
   layout: LayoutPrefs
   setLayout: (patch: Partial<LayoutPrefs>) => void
   toggleSectionCollapsed: (id: string) => void
+  expandSection: (id: string) => void
+  /** Acknowledge a QA warning so it no longer counts against readiness. */
+  ignoreWarning: (id: string, dependencyKey: string) => void
+  /** Restore a previously-acknowledged warning. */
+  restoreWarning: (id: string) => void
+  /** Session-only record of the most recent successful export. */
+  lastExport: { type: string; at: number } | null
+  recordExport: (type: string) => void
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -73,6 +81,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   })
   const [layout, setLayoutState] = useState<LayoutPrefs>(() => loadLayout())
+  const [lastExport, setLastExport] = useState<{ type: string; at: number } | null>(null)
 
   const update = useCallback((patch: (prev: OrderFormData) => OrderFormData) => {
     dispatch({ type: 'update', patch })
@@ -133,6 +142,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         subscription: { ...base.subscription, ...parsed.subscription },
         customerLogo: parsed.customerLogo ?? base.customerLogo,
+        ignoredWarnings: parsed.ignoredWarnings ?? base.ignoredWarnings,
+        termOverrides: parsed.termOverrides ?? base.termOverrides,
         signature: {
           customer: { ...base.signature.customer, ...parsed.signature?.customer },
           surveysparrow: {
@@ -153,6 +164,62 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setLayout = useCallback((patch: Partial<LayoutPrefs>) => {
     setLayoutState((prev) => {
       const next = { ...prev, ...patch }
+      try {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [])
+
+  const recordExport = useCallback((type: string) => {
+    setLastExport({ type, at: Date.now() })
+  }, [])
+
+  /** Persist a full draft immediately (used for acknowledge/restore actions). */
+  const persistNow = useCallback((next: OrderFormData) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+      const now = Date.now()
+      localStorage.setItem(STORAGE_TS_KEY, String(now))
+      setLastSavedAt(now)
+      setSaveStatus('saved')
+    } catch {
+      /* ignore quota errors — the in-memory state still reflects the change */
+    }
+  }, [])
+
+  const ignoreWarning = useCallback(
+    (id: string, dependencyKey: string) => {
+      const next: OrderFormData = {
+        ...data,
+        ignoredWarnings: { ...data.ignoredWarnings, [id]: dependencyKey },
+      }
+      dispatch({ type: 'set', data: next })
+      persistNow(next)
+    },
+    [data, persistNow],
+  )
+
+  const restoreWarning = useCallback(
+    (id: string) => {
+      const nextIgnored = { ...data.ignoredWarnings }
+      delete nextIgnored[id]
+      const next: OrderFormData = { ...data, ignoredWarnings: nextIgnored }
+      dispatch({ type: 'set', data: next })
+      persistNow(next)
+    },
+    [data, persistNow],
+  )
+
+  const expandSection = useCallback((id: string) => {
+    setLayoutState((prev) => {
+      if (!prev.collapsedSections.includes(id)) return prev
+      const next = {
+        ...prev,
+        collapsedSections: prev.collapsedSections.filter((s) => s !== id),
+      }
       try {
         localStorage.setItem(LAYOUT_KEY, JSON.stringify(next))
       } catch {
@@ -205,6 +272,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     layout,
     setLayout,
     toggleSectionCollapsed,
+    expandSection,
+    ignoreWarning,
+    restoreWarning,
+    lastExport,
+    recordExport,
   }
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

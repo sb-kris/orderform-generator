@@ -25,7 +25,7 @@ export function ImageUpload({
   onChange: (asset: ImageAsset | null) => void
   label: string
   hint?: string
-  aspect?: 'landscape' | 'square'
+  aspect?: 'landscape' | 'square' | 'signature'
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -77,27 +77,42 @@ export function ImageUpload({
       </div>
 
       {value ? (
-        <div className="group flex items-center gap-3 rounded-lg border border-slate-200 bg-card p-2 shadow-xs">
-          {/* Neutral tile so transparent logos read as a placed brand asset */}
+        <div className="group flex min-w-0 items-center gap-3 rounded-lg border border-slate-200 bg-card p-2 shadow-xs">
+          {/* Preview tile. Signatures preview on white (like the paper they land
+              on) and get a wider frame so the mark is actually legible. The
+              max-w-[%] cap lets the tile shrink in a narrow pane instead of
+              forcing the whole row (and its grid track) wider than the container. */}
           <div
             className={cn(
-              'flex shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-50 ring-1 ring-slate-200',
-              aspect === 'square' ? 'h-12 w-12' : 'h-11 w-[76px]',
+              'flex shrink-0 items-center justify-center overflow-hidden rounded-md ring-1 ring-slate-200',
+              aspect === 'square' && 'h-12 w-12 bg-slate-50',
+              aspect === 'signature' && 'h-14 w-[150px] max-w-[42%] bg-white',
+              aspect === 'landscape' && 'h-11 w-[76px] max-w-[42%] bg-slate-50',
             )}
           >
             <img
               src={value.dataUrl}
               alt=""
-              className="max-h-[38px] max-w-[68px] object-contain"
+              className={cn(
+                'max-w-full object-contain',
+                aspect === 'signature' ? 'max-h-[48px]' : 'max-h-[38px]',
+              )}
             />
           </div>
-          <div className="min-w-0 flex-1 text-[12px] font-medium text-slate-600">
-            Image added
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-medium text-slate-700">
+              {aspect === 'signature' ? 'Signature added' : 'Image added'}
+            </div>
+            {value.filename && (
+              <div className="truncate text-[11px] text-slate-400" title={value.filename}>
+                {value.filename}
+              </div>
+            )}
           </div>
           <button
             type="button"
             onClick={pick}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            className="shrink-0 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
             title="Replace image"
             aria-label="Replace image"
           >
@@ -106,7 +121,7 @@ export function ImageUpload({
           <button
             type="button"
             onClick={clear}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-destructive"
+            className="shrink-0 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-destructive"
             title="Remove image"
             aria-label="Remove image"
           >
@@ -129,8 +144,12 @@ export function ImageUpload({
         </button>
       )}
 
-      {hint && !error && <div className="text-[11px] text-slate-500">{hint}</div>}
-      {error && <div className="text-[11px] font-medium text-destructive">{error}</div>}
+      {hint && !error && (
+        <div className="break-words text-[11px] text-slate-500">{hint}</div>
+      )}
+      {error && (
+        <div className="break-words text-[11px] font-medium text-destructive">{error}</div>
+      )}
       <input
         ref={inputRef}
         type="file"

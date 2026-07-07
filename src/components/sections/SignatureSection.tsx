@@ -67,7 +67,7 @@ function PartyBlock({
   onChange: (patch: Partial<Signature>) => void
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/40 p-4">
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/40 p-4">
       <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-teal-700">
         {title}
       </div>
@@ -79,7 +79,7 @@ function PartyBlock({
         <RadioGroup
           value={value.type}
           onValueChange={(v) => onChange({ type: v as 'typed' | 'image' })}
-          className="flex gap-4"
+          className="flex flex-wrap gap-2"
         >
           <label
             className={cn(
@@ -120,7 +120,8 @@ function PartyBlock({
           value={value.image}
           onChange={(asset) => onChange({ image: asset })}
           label="Signature Image"
-          hint="Transparent PNG works best. Keep under 512 KB."
+          aspect="signature"
+          hint="Uploaded signatures are embedded visually. For formal e-signature workflows, use an e-signature platform. Transparent PNG works best, under 512 KB."
         />
       )}
 

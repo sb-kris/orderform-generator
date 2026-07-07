@@ -10,10 +10,11 @@ import { TermsSection } from './sections/TermsSection'
 import { SignatureSection } from './sections/SignatureSection'
 import { PurchaseOrderSection } from './sections/PurchaseOrderSection'
 import { PreviewCanvas } from './PreviewCanvas'
-import { ValidationSummary } from './ValidationSummary'
+import { DocumentReadinessPanel } from './qa/DocumentReadinessPanel'
 import { FloatingPreviewToggle } from './FloatingPreviewToggle'
 import { useStore } from '@/state/store'
 import { validate } from '@/state/validation'
+import { runDocumentQa } from '@/lib/qa/documentQa'
 import { formatCurrency } from '@/lib/format'
 import { CURRENCIES } from '@/lib/currency'
 import { useResizable } from '@/lib/useResizable'
@@ -24,8 +25,9 @@ const SIDEBAR_COLLAPSED = 60
 
 export function AppShell() {
   const [activeId, setActiveId] = useState('customer')
-  const { data, totals, layout, setLayout } = useStore()
+  const { data, totals, layout, setLayout, expandSection } = useStore()
   const issues = useMemo(() => validate(data), [data])
+  const report = useMemo(() => runDocumentQa(data), [data])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const previewPane = useResizable({
@@ -41,8 +43,33 @@ export function AppShell() {
 
   const scrollTo = (id: string) => {
     setActiveId(id)
+    expandSection(id)
     const el = document.getElementById(id)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  /**
+   * Smart-fix navigation: expand the target section (if collapsed), scroll it
+   * into view, then focus + briefly flash the specific field once the layout
+   * has settled. Falls back to a section-level scroll when no field id is set.
+   */
+  const focusIssue = (sectionId: string, fieldId?: string) => {
+    setActiveId(sectionId)
+    expandSection(sectionId)
+    requestAnimationFrame(() => {
+      document
+        .getElementById(sectionId)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      if (!fieldId) return
+      // Wait for the collapse animation + smooth scroll to settle.
+      window.setTimeout(() => {
+        const el = document.getElementById(fieldId) as HTMLElement | null
+        if (!el) return
+        el.focus({ preventScroll: true })
+        el.classList.add('field-flash')
+        window.setTimeout(() => el.classList.remove('field-flash'), 1300)
+      }, 380)
+    })
   }
 
   // Highlight the section closest to the top of the viewport as the user scrolls.
@@ -64,7 +91,7 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-background">
-      <StickyToolbar onNavigateToSection={scrollTo} />
+      <StickyToolbar report={report} onFocusIssue={focusIssue} />
 
       <div
         ref={containerRef}
@@ -104,17 +131,21 @@ export function AppShell() {
         </aside>
 
         <main
-          className="min-w-0 flex-1 pr-4"
+          className={cn('min-w-0 flex-1 pr-4', previewCollapsed && 'mx-auto')}
           style={{
+            // With the preview open, cap the form to the space left of the pane.
+            // With it collapsed, cap to a comfortable reading width and centre
+            // it, so the form never sprawls across an ultrawide screen leaving a
+            // large empty right margin.
             maxWidth: previewCollapsed
-              ? undefined
+              ? 1040
               : `calc(100% - ${previewPane.fraction * 100}% - ${
                   sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED
                 }px)`,
           }}
         >
-          <div className="grid gap-4">
-            <ValidationSummary issues={issues} onGoto={scrollTo} />
+          <div className="grid gap-5">
+            <DocumentReadinessPanel report={report} onFocusIssue={focusIssue} />
             <CustomerInfoSection />
             <SoldToSection />
             <ServicesTable />

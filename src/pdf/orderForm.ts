@@ -23,6 +23,7 @@ import {
   drawWrappedText,
   ensureSpace,
   keepTogether,
+  newPage,
   sanitizeText,
   truncate,
   wrapText,
@@ -31,19 +32,38 @@ import {
 import type { ImageAsset, OrderFormData, Signature } from '@/state/types'
 import { buildDocModel, type DocModel } from '@/lib/docModel'
 import { formatDate } from '@/lib/format'
-import { TERMS } from '@/lib/terms'
-import type { PDFImage } from 'pdf-lib'
+import { buildTerms, type TermClause } from '@/lib/terms'
+import { TEMPLATE_VERSION } from '@/lib/exports/exportModes'
+import { degrees, PDFName, PDFString, type PDFField, type PDFImage } from 'pdf-lib'
 
-type Mode = 'final' | 'fillable'
+/**
+ * Attach a hover tooltip (the AcroForm `/TU` "user name" entry) to a field.
+ * pdf-lib 1.17.1 has no high-level setter, so we write the dict entry directly.
+ * Best-effort — a failure here must never abort an export.
+ */
+function setFieldTooltip(field: PDFField, text: string) {
+  try {
+    field.acroField.dict.set(PDFName.of('TU'), PDFString.of(text))
+  } catch {
+    /* tooltip is a nice-to-have */
+  }
+}
+
+/**
+ * `draft`    – flattened static text with a diagonal DRAFT watermark; permissive.
+ * `final`    – flattened, no watermark; the customer-ready artefact.
+ * `fillable` – customer signature/name/designation/date + PO fields stay editable.
+ */
+export type Mode = 'final' | 'fillable' | 'draft'
 
 export async function renderOrderForm(
   data: OrderFormData,
   mode: Mode,
 ): Promise<Uint8Array> {
   const model = buildDocModel(data)
-  const title = `SurveySparrow Order Form – ${model.customer.legalName || 'Draft'}${
-    mode === 'fillable' ? ' (Fillable)' : ''
-  }`
+  const kindSuffix =
+    mode === 'fillable' ? ' (Fillable)' : mode === 'draft' ? ' (Draft)' : ''
+  const title = `Service Order Form – ${model.customer.legalName || 'Draft'}${kindSuffix}`
 
   // Decode the optional customer logo (data URL) into bytes for embedding.
   let logoBytes: Uint8Array | null = null
@@ -75,23 +95,83 @@ export async function renderOrderForm(
   renderServices(layout, model)
   renderBillingShipping(layout, model)
   renderSubscription(layout, model)
-  renderTerms(layout)
+  renderTerms(layout, buildTerms(data.subscription.paymentTermDays ?? 30, data.termOverrides ?? {}))
   renderExecutionAndPurchaseOrder(layout, data, model, mode, custSigImg, ssSigImg)
 
   drawFooters(layout)
 
-  if (mode === 'final') {
+  if (mode === 'draft') drawDraftWatermark(layout)
+
+  setDocumentMetadata(layout, model, mode)
+
+  if (mode === 'fillable') {
+    const form = layout.doc.getForm()
+    form.updateFieldAppearances(layout.fonts.regular)
+  } else {
+    // Final + Draft are flattened so no stray editable fields remain.
     try {
       layout.doc.getForm().flatten()
     } catch {
       /* no form to flatten */
     }
-  } else {
-    const form = layout.doc.getForm()
-    form.updateFieldAppearances(layout.fonts.regular)
   }
 
+  // NB: pdf-lib overwrites the Producer field with its own name on save (the
+  // `updateMetadata` opt-out isn't available in this version). Title/Author/
+  // Creator/Subject/Keywords are all set to SurveySparrow and are Quill-free —
+  // only the low-signal Producer shows the library name.
   return await layout.doc.save({ useObjectStreams: false })
+}
+
+/**
+ * Complete PDF metadata (pdf-lib sets a few defaults in `createLayout`; this
+ * fills in keywords/producer/dates and a per-customer title/subject so the
+ * file reads correctly in a reader's Properties dialog and in search).
+ */
+function setDocumentMetadata(layout: Layout, model: DocModel, mode: Mode) {
+  const doc = layout.doc
+  const customer = model.customer.legalName || 'Draft'
+  const now = new Date()
+  doc.setTitle(`SurveySparrow Service Order Form - ${customer}`)
+  doc.setAuthor('SurveySparrow')
+  doc.setSubject('Service Order Form')
+  doc.setKeywords([
+    'SurveySparrow',
+    'Order Form',
+    customer,
+    model.documentId,
+    `Template ${TEMPLATE_VERSION}`,
+    mode === 'fillable' ? 'Fillable' : mode === 'draft' ? 'Draft' : 'Final',
+  ])
+  doc.setCreator('SurveySparrow')
+  doc.setProducer('SurveySparrow')
+  doc.setCreationDate(now)
+  doc.setModificationDate(now)
+}
+
+/** Diagonal, low-opacity DRAFT stamp across every page of a Draft export. */
+function drawDraftWatermark(l: Layout) {
+  const text = 'DRAFT'
+  const size = 120
+  const font = l.fonts.display
+  const textW = font.widthOfTextAtSize(text, size)
+  // Centre the rotated baseline roughly on the page middle.
+  const cx = PAGE.width / 2
+  const cy = PAGE.height / 2
+  const rad = (45 * Math.PI) / 180
+  const x = cx - (textW / 2) * Math.cos(rad) + (size / 2) * Math.sin(rad)
+  const y = cy - (textW / 2) * Math.sin(rad) - (size / 2) * Math.cos(rad)
+  l.pages.forEach((page) => {
+    page.drawText(text, {
+      x,
+      y,
+      size,
+      font,
+      color: COLORS.slate400,
+      rotate: degrees(45),
+      opacity: 0.12,
+    })
+  })
 }
 
 async function maybeEmbedImage(
@@ -488,19 +568,41 @@ function renderSubscription(l: Layout, m: DocModel) {
     { label: 'Start Date', value: m.subscription.startDate, required: true },
     { label: 'Payment Method', value: m.subscription.paymentMethod, required: true },
   ])
-  drawWrappedText(l, 'Payable within 30 days upon the receipt of invoice.', {
-    weight: 'oblique',
-    size: 9,
-    color: COLORS.slate600,
+  // Payment terms as a subtle callout (teal-tinted strip with an accent bar)
+  // rather than a loose italic line — more scannable, still formal.
+  ensureSpace(l, 26)
+  const cy = l.y
+  const calloutH = 20
+  drawRoundedRect(l.page, {
+    x: PAGE.marginX,
+    y: cy - calloutH,
+    width: CONTENT_W,
+    height: calloutH,
+    radius: 4,
+    color: COLORS.tealSoft,
   })
-  l.y -= 2
+  l.page.drawRectangle({
+    x: PAGE.marginX,
+    y: cy - calloutH,
+    width: 2.5,
+    height: calloutH,
+    color: COLORS.teal,
+  })
+  l.page.drawText(sanitizeText(m.payableNote), {
+    x: PAGE.marginX + 12,
+    y: cy - 13,
+    size: 9,
+    font: l.fonts.oblique,
+    color: COLORS.slate700,
+  })
+  l.y = cy - calloutH - 6
 }
 
-function renderTerms(l: Layout) {
+function renderTerms(l: Layout, terms: TermClause[]) {
   drawSectionHeading(l, '06', 'Terms & Conditions')
 
   let lastPageIndex = l.pages.length - 1
-  TERMS.forEach((t) => {
+  terms.forEach((t) => {
     keepTogether(l, 28)
     if (l.pages.length - 1 !== lastPageIndex) {
       drawSectionHeading(l, '06', 'Terms & Conditions', true)
@@ -572,16 +674,162 @@ function renderExecutionAndPurchaseOrder(
   })
   l.y = startY - cardH - 14
 
-  // Purchase Order is compact — keep its heading and row together so it moves
-  // cleanly as a unit rather than splitting a heading from its content.
-  keepTogether(l, 34 + 46 + 30)
-  drawSectionHeading(l, '08', 'Purchase Order')
-  drawPurchaseOrderRow(l, data, m, mode)
+  // Purchase Order placement. Two paths, decided by remaining space:
+  //  (a) it fits under the signatures → render it inline + a closing rule, so
+  //      Execution and PO read as one finished page.
+  //  (b) it would spill / strand on a near-empty page → give it a deliberate
+  //      "Acceptance & Purchase Order" page with a deal summary, so the last
+  //      page never looks like an accidental orphan.
+  const inlineNeeds = 34 + 52 + 46 // heading + PO fields + closing mark
+  if (l.y - inlineNeeds >= PAGE.marginBottom + 20) {
+    drawSectionHeading(l, '08', 'Purchase Order')
+    drawPurchaseOrderFields(l, data, m, mode, { leftX: PAGE.marginX, width: CONTENT_W })
+    drawClosingMark(l)
+  } else {
+    drawAcceptancePage(l, data, m, mode)
+  }
+}
 
-  // Elegant closing mark instead of a legal disclaimer — a centered rule
-  // that signals the end of the document and gives the final page a
-  // deliberate, finished feel.
+/**
+ * Dedicated final page used when the Purchase Order can't sit cleanly under
+ * the signatures. Title + at-a-glance deal summary + framed PO card + closing
+ * rule, so a forced page break reads as intentional rather than empty.
+ */
+function drawAcceptancePage(l: Layout, data: OrderFormData, m: DocModel, mode: Mode) {
+  newPage(l)
+  l.y -= 6
+
+  // Page title (no numbered circle — this is a summary page, not section 08).
+  l.page.drawText('Acceptance & Purchase Order', {
+    x: PAGE.marginX,
+    y: l.y - 20,
+    size: 20,
+    font: l.fonts.display,
+    color: COLORS.slate950,
+  })
+  l.y -= 30
+  l.page.drawLine({
+    start: { x: PAGE.marginX, y: l.y },
+    end: { x: PAGE.width - PAGE.marginX, y: l.y },
+    color: COLORS.slate200,
+    thickness: 0.7,
+  })
+  l.y -= 16
+
+  // Commercial summary card — the at-a-glance deal snapshot.
+  drawCommercialSummary(l, m)
+  l.y -= 20
+
+  // Framed PO card.
+  drawSectionHeading(l, '08', 'Purchase Order')
+  const cardTop = l.y
+  const cardH = 74
+  drawRoundedRect(l.page, {
+    x: PAGE.marginX,
+    y: cardTop - cardH,
+    width: CONTENT_W,
+    height: cardH,
+    radius: 8,
+    color: COLORS.slate50,
+    borderColor: COLORS.slate200,
+    borderWidth: 0.8,
+  })
+  l.y = cardTop - 16
+  drawPurchaseOrderFields(l, data, m, mode, {
+    leftX: PAGE.marginX + 18,
+    width: CONTENT_W - 36,
+  })
+  l.y = cardTop - cardH - 4
   drawClosingMark(l)
+}
+
+/**
+ * Compact "Commercial Summary" card: customer on top, then a 3×2 grid of the
+ * key commercial terms with the Total emphasised in brand teal. Gives the
+ * acceptance page a deliberate, procurement-friendly snapshot.
+ */
+function drawCommercialSummary(l: Layout, m: DocModel) {
+  const top = l.y
+  const pad = 16
+  const cardH = 132
+  const page = l.page
+
+  drawRoundedRect(page, {
+    x: PAGE.marginX,
+    y: top - cardH,
+    width: CONTENT_W,
+    height: cardH,
+    radius: 8,
+    color: COLORS.slate50,
+    borderColor: COLORS.slate200,
+    borderWidth: 0.8,
+  })
+
+  const left = PAGE.marginX + pad
+  page.drawText('COMMERCIAL SUMMARY', {
+    x: left,
+    y: top - 16,
+    size: 7,
+    font: l.fonts.bold,
+    color: COLORS.tealDeep,
+  })
+  page.drawLine({
+    start: { x: left, y: top - 22 },
+    end: { x: PAGE.width - PAGE.marginX - pad, y: top - 22 },
+    color: COLORS.slate200,
+    thickness: 0.6,
+  })
+
+  // Customer (full width).
+  page.drawText('CUSTOMER', {
+    x: left,
+    y: top - 36,
+    size: 6.5,
+    font: l.fonts.bold,
+    color: COLORS.slate500,
+  })
+  page.drawText(
+    truncate(sanitizeText(m.customer.legalName || '—'), l.fonts.medium, 11, CONTENT_W - pad * 2),
+    { x: left, y: top - 50, size: 11, font: l.fonts.medium, color: COLORS.slate950 },
+  )
+
+  // 3×2 grid of terms.
+  const gap = 14
+  const colW = (CONTENT_W - pad * 2 - gap * 2) / 3
+  const cells: Array<{ label: string; value: string; emphasize?: boolean }> = [
+    { label: 'TOTAL', value: m.totalLabel, emphasize: true },
+    { label: 'CURRENCY', value: m.currencyCode },
+    { label: 'BILLING PERIOD', value: m.subscription.billingPeriod },
+    {
+      label: 'SUBSCRIPTION TERM',
+      value: m.subscription.termMonths ? `${m.subscription.termMonths} months` : '—',
+    },
+    { label: 'START DATE', value: m.subscription.startDate || '—' },
+    { label: 'VALID THROUGH', value: m.customer.pricingValidThrough || '—' },
+  ]
+  const rowTops = [top - 70, top - 104]
+  cells.forEach((c, i) => {
+    const col = i % 3
+    const rowTop = rowTops[Math.floor(i / 3)]
+    const x = left + col * (colW + gap)
+    page.drawText(c.label, {
+      x,
+      y: rowTop,
+      size: 6,
+      font: l.fonts.bold,
+      color: COLORS.slate500,
+    })
+    const size = c.emphasize ? 13 : 10.5
+    page.drawText(truncate(sanitizeText(c.value), l.fonts.display, size, colW), {
+      x,
+      y: rowTop - 15,
+      size,
+      font: l.fonts.display,
+      color: c.emphasize ? COLORS.tealDeep : COLORS.slate950,
+    })
+  })
+
+  l.y = top - cardH
 }
 
 /** Centered "END OF ORDER FORM" rule that closes out the final page. */
@@ -730,14 +978,29 @@ function drawSignatureCard(
     // Field values are sanitized too: addToPage builds the initial appearance
     // stream with WinAnsi Helvetica, which throws on any non-WinAnsi char
     // (₹, CJK, …) and would abort the whole fillable export.
-    sigField.setText(sanitizeText(signature.signatureName || ''))
+    const sigText = sanitizeText(signature.signatureName || '')
+    sigField.setText(sigText)
+    // A short field sitting just above the baseline rule — reads like a signed
+    // line, not a giant input box.
     sigField.addToPage(page, {
       x: x + 14,
-      y: sigBaseY + 2,
+      y: sigBaseY + 3,
       width: width - 28,
-      height: 34,
+      height: 20,
       borderWidth: 0,
     })
+    // Explicit, name-length-aware font size — set AFTER addToPage, which creates
+    // the field's /DA entry (setFontSize needs it). Without this the field
+    // auto-sizes to fill its height, rendering the signature comically large.
+    // Clamp to a restrained range and shrink long names to fit the box; the
+    // final updateFieldAppearances() re-renders the appearance at this size.
+    let sigSize = 14
+    const sigMaxW = width - 40
+    while (sigSize > 10 && l.fonts.regular.widthOfTextAtSize(sigText || 'X', sigSize) > sigMaxW) {
+      sigSize -= 0.5
+    }
+    sigField.setFontSize(sigSize)
+    setFieldTooltip(sigField, 'Customer signature')
   } else if (signature.signatureName) {
     // Typed signature in Great Vibes (calligraphic but legible), auto-fitted:
     // start at a natural signature size and shrink until the name fits the
@@ -765,21 +1028,25 @@ function drawSignatureCard(
   }
 
   // Name / Designation / Date rows: caption + value over a hairline rule.
-  const rows: Array<{ label: string; value: string; fieldName?: string }> = [
+  const rows: Array<{ label: string; value: string; fieldName?: string; tooltip?: string }> = [
     {
       label: 'NAME',
       value: signature.name,
       fieldName: fillable && fieldPrefix ? `${fieldPrefix}.name` : undefined,
+      tooltip: 'Full name of the signatory',
     },
     {
       label: 'DESIGNATION',
       value: signature.designation,
       fieldName: fillable && fieldPrefix ? `${fieldPrefix}.designation` : undefined,
+      tooltip: 'Job title / designation of the signatory',
     },
     {
+      // Semantic field name `signDate` (not the ambiguous `date`).
       label: 'DATE',
       value: formatDate(signature.date),
-      fieldName: fillable && fieldPrefix ? `${fieldPrefix}.date` : undefined,
+      fieldName: fillable && fieldPrefix ? `${fieldPrefix}.signDate` : undefined,
+      tooltip: 'Date signed',
     },
   ]
   const rowH = 27
@@ -804,6 +1071,7 @@ function drawSignatureCard(
         height: 14,
         borderWidth: 0,
       })
+      if (r.tooltip) setFieldTooltip(tf, r.tooltip)
       page.drawLine({
         start: { x: x + 14, y: valueBaseY - 3 },
         end: { x: x + width - 14, y: valueBaseY - 3 },
@@ -831,20 +1099,22 @@ function drawSignatureCard(
   })
 }
 
-function drawPurchaseOrderRow(
+function drawPurchaseOrderFields(
   l: Layout,
   data: OrderFormData,
   m: DocModel,
   mode: Mode,
+  bounds: { leftX: number; width: number },
 ) {
   const startY = l.y
   const page = l.page
   const rowH = 44
-  const colW = (CONTENT_W - 24) / 3
+  const { leftX, width } = bounds
+  const colW = (width - 24) / 3
   const columns = [
-    { label: 'PO REQUIRED', x: PAGE.marginX, w: colW },
-    { label: 'PO NUMBER', x: PAGE.marginX + colW + 12, w: colW },
-    { label: m.po.amountHeading.toUpperCase(), x: PAGE.marginX + (colW + 12) * 2, w: colW },
+    { label: 'PO REQUIRED', x: leftX, w: colW },
+    { label: 'PO NUMBER', x: leftX + colW + 12, w: colW },
+    { label: m.po.amountHeading.toUpperCase(), x: leftX + (colW + 12) * 2, w: colW },
   ]
 
   columns.forEach((c) => {
@@ -866,6 +1136,7 @@ function drawPurchaseOrderRow(
     const noX = columns[0].x + 60
     radio.addOptionToPage('Yes', page, { x: yesX, y: valueY, width: 14, height: 14 })
     radio.addOptionToPage('No', page, { x: noX, y: valueY, width: 14, height: 14 })
+    setFieldTooltip(radio, 'Is a purchase order required?')
     page.drawText('Yes', {
       x: yesX + 20,
       y: valueY + 2,
@@ -901,6 +1172,7 @@ function drawPurchaseOrderRow(
       height: valueH - 4,
       borderWidth: 0,
     })
+    setFieldTooltip(num, 'Purchase order number')
 
     drawRoundedRect(page, {
       x: columns[2].x,
@@ -921,6 +1193,7 @@ function drawPurchaseOrderRow(
       height: valueH - 4,
       borderWidth: 0,
     })
+    setFieldTooltip(amt, 'Purchase order amount')
   } else {
     const values = [m.po.required, m.po.numberLabel, m.po.amountLabel]
     columns.forEach((c, i) => {

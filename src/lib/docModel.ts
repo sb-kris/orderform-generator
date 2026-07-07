@@ -7,6 +7,7 @@
 import type { OrderFormData } from '@/state/types'
 import { formatCurrency, formatDate, parseNumber } from './format'
 import { CURRENCIES, type CurrencyCode } from './currency'
+import { payableNote } from './terms'
 
 export type ServiceRow = {
   description: string
@@ -39,7 +40,10 @@ export type DocModel = {
     termMonths: string
     startDate: string
     paymentMethod: string
+    paymentTermDays: number
   }
+  /** One-line payment callout, single-sourced from the net term. */
+  payableNote: string
   po: {
     required: 'Yes' | 'No'
     numberLabel: string
@@ -50,6 +54,8 @@ export type DocModel = {
 
 export function buildDocModel(data: OrderFormData): DocModel {
   const currency = data.currency
+  // Guard old drafts that predate the field.
+  const netDays = data.subscription.paymentTermDays ?? 30
   const populated = data.services.filter(
     (s) => s.description.trim() || parseNumber(s.price) || parseNumber(s.quantity),
   )
@@ -92,7 +98,9 @@ export function buildDocModel(data: OrderFormData): DocModel {
       termMonths: data.subscription.termMonths,
       startDate: formatDate(data.subscription.startDate),
       paymentMethod: data.subscription.paymentMethod,
+      paymentTermDays: netDays,
     },
+    payableNote: payableNote(netDays),
     po: {
       required: data.purchaseOrder.required,
       numberLabel:

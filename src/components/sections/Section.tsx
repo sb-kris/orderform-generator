@@ -36,7 +36,7 @@ export function Section({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="scroll-mt-24 rounded-xl border border-slate-200 bg-card shadow-xs"
+      className="scroll-mt-24 rounded-xl border border-slate-200 bg-card shadow-card"
     >
       <div className="flex w-full items-center gap-4 px-5 py-4">
         <button
@@ -48,19 +48,19 @@ export function Section({
         >
           <span
             className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold tabular-nums',
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-[12px] font-bold tabular-nums transition-colors',
               errorCount > 0
-                ? 'bg-amber-100 text-amber-800'
+                ? 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200'
                 : complete
-                  ? 'bg-teal-400 text-white'
-                  : 'bg-slate-100 text-slate-500',
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200',
             )}
           >
             {number}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="font-display text-[17px] font-bold text-slate-950">
+              <h2 className="font-display text-[18px] font-bold -tracking-[0.01em] text-slate-950">
                 {title}
               </h2>
               {complete && errorCount === 0 && (

@@ -2,13 +2,15 @@ import { motion, AnimatePresence } from 'motion/react'
 import {
   Download,
   FileDown,
+  FileClock,
   RotateCcw,
   Save,
   Upload,
   FileType,
   CheckCircle2,
-  Circle,
   AlertCircle,
+  AlertTriangle,
+  Sparkles,
   MoreHorizontal,
   Loader2,
   Moon,
@@ -16,24 +18,39 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from './ui/button'
+import { ExportConfirmationModal } from './qa/ExportConfirmationModal'
 import { useStore, clearDraft } from '@/state/store'
-import { criticalIssues } from '@/state/validation'
+import type { OrderFormData } from '@/state/types'
+import type { QaReport, ReadinessStatus } from '@/lib/qa/documentQa'
+import {
+  EXPORT_MODES,
+  getExportDecision,
+  type ExportMode,
+  type ExportModeId,
+} from '@/lib/exports/exportModes'
+import { buildExportFileName } from '@/lib/exports/fileNaming'
 import { cn } from '@/lib/cn'
 import { applyTheme, getStoredTheme, type Theme } from '@/lib/theme'
 
 type Toast = { id: number; text: string; variant: 'success' | 'warning' | 'info' }
-type Downloading = 'final' | 'fillable' | 'docx' | null
 
 export function StickyToolbar({
-  onNavigateToSection,
+  report,
+  onFocusIssue,
 }: {
-  onNavigateToSection: (id: string) => void
+  report: QaReport
+  onFocusIssue: (sectionId: string, fieldId?: string) => void
 }) {
-  const { data, saveDraft, loadDraft, reset, saveStatus, lastSavedAt } = useStore()
+  const { data, saveDraft, loadDraft, reset, saveStatus, lastSavedAt, recordExport } =
+    useStore()
   const [toasts, setToasts] = useState<Toast[]>([])
-  const [downloading, setDownloading] = useState<Downloading>(null)
+  const [downloading, setDownloading] = useState<ExportModeId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme())
+
+  // Confirmation modal state.
+  const [pendingMode, setPendingMode] = useState<ExportMode | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   // Re-render every 30s so the "last saved" relative time stays fresh.
   const [, setTick] = useState(0)
@@ -52,100 +69,94 @@ export function StickyToolbar({
   const notify = (text: string, variant: Toast['variant'] = 'info') => {
     const id = Date.now() + Math.random()
     setToasts((t) => [...t, { id, text, variant }])
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600)
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200)
   }
 
   const doSave = () => {
-    if (saveDraft()) {
-      notify('Draft saved to this browser.', 'success')
-    } else {
+    if (saveDraft()) notify('Draft saved to this browser.', 'success')
+    else
       notify(
         'Could not save draft — browser storage is full. Try removing or shrinking uploaded images.',
         'warning',
       )
-    }
   }
 
   const doLoad = () => {
     const ok = loadDraft()
-    notify(
-      ok ? 'Draft loaded.' : 'No saved draft in this browser.',
-      ok ? 'success' : 'warning',
-    )
+    notify(ok ? 'Draft loaded.' : 'No saved draft in this browser.', ok ? 'success' : 'warning')
   }
 
   const doReset = () => {
-    if (!confirm('Clear all fields and remove the saved draft? This cannot be undone.'))
-      return
+    if (!confirm('Clear all fields and remove the saved draft? This cannot be undone.')) return
     reset()
     clearDraft()
     notify('Form reset.', 'info')
   }
 
-  const doDownloadFinal = async () => {
+  // ---- Export flow ----------------------------------------------------------
+
+  /** Entry point for every export button; applies the mode's QA gating. */
+  const requestExport = (modeId: ExportModeId) => {
     if (downloading) return
-    const crit = criticalIssues(data)
-    if (crit.length) {
+    const mode = EXPORT_MODES[modeId]
+    const decision = getExportDecision(mode, report)
+
+    if (decision.blocked) {
+      const n = report.errors.length
       notify(
-        `Fix ${crit.length} required field${crit.length === 1 ? '' : 's'} before downloading the Final PDF.`,
+        `Fix ${n} required field${n === 1 ? '' : 's'} before the ${mode.label}.`,
         'warning',
       )
-      onNavigateToSection(crit[0].sectionId)
+      const first = report.errors[0]
+      if (first) onFocusIssue(first.sectionId, first.fieldId)
       return
     }
-    setDownloading('final')
+
+    if (decision.needsConfirm) {
+      setPendingMode(mode)
+      setModalOpen(true)
+      return
+    }
+
+    void runExport(mode)
+  }
+
+  const runExport = async (mode: ExportMode) => {
+    setDownloading(mode.id)
     try {
-      const { generateFinalPdf } = await import('@/pdf/finalPdf')
-      const bytes = await generateFinalPdf(data)
-      downloadBytes(bytes, buildFileName(data, 'Final', 'pdf'), 'application/pdf')
-      notify('Final PDF downloaded.', 'success')
+      const bytes = await generate(mode.id, data)
+      const mime =
+        mode.ext === 'pdf'
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      downloadBytes(bytes, buildExportFileName(data.customer.legalName, mode), mime)
+      recordExport(mode.id)
+      notify(exportSuccessMessage(mode), 'success')
     } catch (err) {
       console.error(err)
-      notify('Could not generate PDF.', 'warning')
+      const detail = err instanceof Error ? ` (${err.message})` : ''
+      notify(`Could not generate ${mode.label}${detail}.`, 'warning')
     } finally {
       setDownloading(null)
     }
   }
 
-  const doDownloadFillable = async () => {
-    if (downloading) return
-    setDownloading('fillable')
-    try {
-      const { generateFillablePdf } = await import('@/pdf/fillablePdf')
-      const bytes = await generateFillablePdf(data)
-      downloadBytes(bytes, buildFileName(data, 'Fillable', 'pdf'), 'application/pdf')
-      notify('Fillable PDF downloaded – customer fields remain editable.', 'success')
-    } catch (err) {
-      console.error(err)
-      notify('Could not generate fillable PDF.', 'warning')
-    } finally {
-      setDownloading(null)
-    }
+  const confirmExport = () => {
+    if (!pendingMode) return
+    const mode = pendingMode
+    setModalOpen(false)
+    void runExport(mode)
   }
 
-  const doDownloadDocx = async () => {
-    if (downloading) return
-    setDownloading('docx')
-    try {
-      const { generateDocx } = await import('@/pdf/docx')
-      const bytes = await generateDocx(data)
-      downloadBytes(
-        bytes,
-        buildFileName(data, 'Editable', 'docx'),
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      )
-      notify('Word DOCX downloaded.', 'success')
-    } catch (err) {
-      console.error(err)
-      const msg = err instanceof Error ? err.message : 'unknown error'
-      notify(`Could not generate DOCX (${msg}).`, 'warning')
-    } finally {
-      setDownloading(null)
-    }
+  const reviewIssues = () => {
+    setModalOpen(false)
+    const first = report.errors[0] ?? report.warnings[0]
+    if (first) onFocusIssue(first.sectionId, first.fieldId)
   }
 
-  const critCount = criticalIssues(data).length
-  const readyToGenerate = critCount === 0
+  const pendingFilename = pendingMode
+    ? buildExportFileName(data.customer.legalName, pendingMode)
+    : ''
 
   return (
     <>
@@ -160,7 +171,7 @@ export function StickyToolbar({
               draggable={false}
             />
             <div className="min-w-0 leading-tight">
-              <div className="font-display text-[17px] font-bold tracking-tight text-slate-950">
+              <div className="font-display text-[20px] font-bold -tracking-[0.01em] text-slate-950">
                 Quill
               </div>
               <div className="hidden truncate text-[11px] text-slate-500 lg:block">
@@ -170,19 +181,14 @@ export function StickyToolbar({
           </div>
 
           <div className="ml-2 hidden shrink-0 flex-col items-start gap-0.5 lg:flex">
-            <StatusPill status={saveStatus} ready={readyToGenerate} critCount={critCount} />
+            <ReadinessChip report={report} saveStatus={saveStatus} />
             {savedAgo && (
-              <span className="pl-0.5 text-[10px] text-slate-400">
-                Saved locally · {savedAgo}
-              </span>
+              <span className="pl-0.5 text-[10px] text-slate-400">Saved locally · {savedAgo}</span>
             )}
           </div>
 
-          {/* Action groups: Draft · Export · Utilities. Kept in this order so
-              the eye reads left-to-right from low-stakes drafting to the
-              primary Final PDF export, with theme as a trailing utility. */}
+          {/* Draft · Export group · Utilities */}
           <div className="ml-auto flex shrink-0 items-center gap-2.5">
-            {/* Draft group — low-emphasis ghost buttons in a subtle tray */}
             <div className="hidden items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 md:flex">
               <Button variant="ghost" size="sm" onClick={doLoad} className="h-8">
                 <Upload className="h-3.5 w-3.5" /> Load
@@ -195,39 +201,36 @@ export function StickyToolbar({
               </Button>
             </div>
 
-            {/* Export group — secondary outlines + primary Final PDF */}
+            {/* Subtle divider separating quiet draft actions from exports. */}
+            <div className="hidden h-6 w-px bg-slate-200 md:block" aria-hidden />
+
+            {/* Export cluster: three secondary outputs, then the single primary. */}
             <div className="hidden items-center gap-2 md:flex">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={doDownloadDocx}
-                disabled={downloading !== null}
-              >
-                {downloading === 'docx' ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileType className="h-3.5 w-3.5" />
-                )}
-                {downloading === 'docx' ? 'Preparing…' : 'DOCX'}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={doDownloadFillable}
-                disabled={downloading !== null}
-              >
-                {downloading === 'fillable' ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileDown className="h-3.5 w-3.5" />
-                )}
-                {downloading === 'fillable' ? 'Preparing…' : 'Fillable PDF'}
-              </Button>
+              <ExportButton
+                mode={EXPORT_MODES.draft}
+                icon={<FileClock className="h-3.5 w-3.5" />}
+                downloading={downloading}
+                onClick={() => requestExport('draft')}
+              />
+              <ExportButton
+                mode={EXPORT_MODES.docx}
+                icon={<FileType className="h-3.5 w-3.5" />}
+                downloading={downloading}
+                onClick={() => requestExport('docx')}
+              />
+              <ExportButton
+                mode={EXPORT_MODES.fillable}
+                icon={<FileDown className="h-3.5 w-3.5" />}
+                downloading={downloading}
+                onClick={() => requestExport('fillable')}
+              />
+              {/* Primary action — the single brand-teal button the eye lands on. */}
               <Button
                 size="sm"
-                onClick={doDownloadFinal}
+                onClick={() => requestExport('final')}
                 disabled={downloading !== null}
-                className="bg-foreground text-background shadow-sm hover:bg-foreground/90"
+                title={EXPORT_MODES.final.description}
+                className="shadow-sm"
               >
                 {downloading === 'final' ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -238,7 +241,6 @@ export function StickyToolbar({
               </Button>
             </div>
 
-            {/* Utilities */}
             <Button
               variant="ghost"
               size="icon"
@@ -272,56 +274,14 @@ export function StickyToolbar({
                     transition={{ duration: 0.15 }}
                     className="absolute right-0 mt-1.5 w-56 rounded-lg border border-slate-200 bg-card p-1 shadow-pop"
                   >
-                    <MenuItem
-                      icon={<Upload className="h-3.5 w-3.5" />}
-                      label="Load Draft"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doLoad()
-                      }}
-                    />
-                    <MenuItem
-                      icon={<Save className="h-3.5 w-3.5" />}
-                      label="Save Draft"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doSave()
-                      }}
-                    />
-                    <MenuItem
-                      icon={<RotateCcw className="h-3.5 w-3.5" />}
-                      label="Reset"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doReset()
-                      }}
-                    />
+                    <MenuItem icon={<Upload className="h-3.5 w-3.5" />} label="Load Draft" onClick={() => { setMenuOpen(false); doLoad() }} />
+                    <MenuItem icon={<Save className="h-3.5 w-3.5" />} label="Save Draft" onClick={() => { setMenuOpen(false); doSave() }} />
+                    <MenuItem icon={<RotateCcw className="h-3.5 w-3.5" />} label="Reset" onClick={() => { setMenuOpen(false); doReset() }} />
                     <div className="my-1 h-px bg-slate-100" />
-                    <MenuItem
-                      icon={<FileType className="h-3.5 w-3.5" />}
-                      label="Word DOCX"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doDownloadDocx()
-                      }}
-                    />
-                    <MenuItem
-                      icon={<FileDown className="h-3.5 w-3.5" />}
-                      label="Fillable PDF"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doDownloadFillable()
-                      }}
-                    />
-                    <MenuItem
-                      icon={<Download className="h-3.5 w-3.5" />}
-                      label="Final PDF"
-                      primary
-                      onClick={() => {
-                        setMenuOpen(false)
-                        doDownloadFinal()
-                      }}
-                    />
+                    <MenuItem icon={<FileClock className="h-3.5 w-3.5" />} label="Draft PDF" onClick={() => { setMenuOpen(false); requestExport('draft') }} />
+                    <MenuItem icon={<FileType className="h-3.5 w-3.5" />} label="Editable DOCX" onClick={() => { setMenuOpen(false); requestExport('docx') }} />
+                    <MenuItem icon={<FileDown className="h-3.5 w-3.5" />} label="Fillable PDF" onClick={() => { setMenuOpen(false); requestExport('fillable') }} />
+                    <MenuItem icon={<Download className="h-3.5 w-3.5" />} label="Final PDF" primary onClick={() => { setMenuOpen(false); requestExport('final') }} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -329,6 +289,18 @@ export function StickyToolbar({
           </div>
         </div>
       </div>
+
+      <ExportConfirmationModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        mode={pendingMode}
+        report={report}
+        data={data}
+        filename={pendingFilename}
+        exporting={downloading !== null}
+        onConfirm={confirmExport}
+        onReviewIssues={reviewIssues}
+      />
 
       <div className="pointer-events-none fixed right-4 top-16 z-50 flex w-80 flex-col gap-2">
         <AnimatePresence initial={false}>
@@ -344,12 +316,9 @@ export function StickyToolbar({
               <div
                 className={cn(
                   'rounded-lg border px-3 py-2.5 text-[12px] font-medium shadow-pop',
-                  t.variant === 'success' &&
-                    'border-teal-200 bg-teal-50 text-teal-800',
-                  t.variant === 'warning' &&
-                    'border-amber-200 bg-amber-50 text-amber-900',
-                  t.variant === 'info' &&
-                    'border-slate-200 bg-card text-slate-900',
+                  t.variant === 'success' && 'border-teal-200 bg-teal-50 text-teal-800',
+                  t.variant === 'warning' && 'border-amber-200 bg-amber-50 text-amber-900',
+                  t.variant === 'info' && 'border-slate-200 bg-card text-slate-900',
                 )}
               >
                 {t.text}
@@ -359,6 +328,32 @@ export function StickyToolbar({
         </AnimatePresence>
       </div>
     </>
+  )
+}
+
+function ExportButton({
+  mode,
+  icon,
+  downloading,
+  onClick,
+}: {
+  mode: ExportMode
+  icon: React.ReactNode
+  downloading: ExportModeId | null
+  onClick: () => void
+}) {
+  const busy = downloading === mode.id
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={downloading !== null}
+      title={mode.description}
+    >
+      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : icon}
+      {busy ? 'Preparing…' : mode.label}
+    </Button>
   )
 }
 
@@ -380,7 +375,7 @@ function MenuItem({
       className={cn(
         'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]',
         primary
-          ? 'bg-foreground text-background hover:bg-foreground/90'
+          ? 'bg-primary text-primary-foreground hover:bg-primary/90'
           : 'text-slate-800 hover:bg-slate-100',
       )}
     >
@@ -390,49 +385,80 @@ function MenuItem({
   )
 }
 
-function StatusPill({
-  status,
-  ready,
-  critCount,
+const CHIP_TONE: Record<ReadinessStatus, string> = {
+  'needs-attention': 'border-rose-200 bg-rose-50 text-rose-700',
+  'almost-ready': 'border-amber-200 bg-amber-50 text-amber-800',
+  ready: 'border-teal-200 bg-teal-50 text-teal-800',
+  'customer-ready': 'border-teal-200 bg-teal-50 text-teal-800',
+}
+
+function ReadinessChip({
+  report,
+  saveStatus,
 }: {
-  status: 'clean' | 'unsaved' | 'saved'
-  ready: boolean
-  critCount: number
+  report: QaReport
+  saveStatus: 'clean' | 'unsaved' | 'saved'
 }) {
-  let label = 'Local Draft'
-  let icon = <Circle className="h-3 w-3 fill-slate-400 text-slate-400" />
-  let color = 'border-slate-200 bg-slate-50 text-slate-700'
-  if (status === 'unsaved') {
-    label = 'Unsaved Changes'
-    icon = <Circle className="h-3 w-3 fill-amber-500 text-amber-500" />
-    color = 'border-amber-200 bg-amber-50 text-amber-800'
-  } else if (status === 'saved') {
-    label = 'Saved'
-    icon = <CheckCircle2 className="h-3 w-3 text-teal-600" />
-    color = 'border-teal-200 bg-teal-50 text-teal-800'
-  }
-  if (ready && status !== 'unsaved') {
-    label = 'Ready to Generate'
-    icon = <CheckCircle2 className="h-3 w-3 text-teal-600" />
-    color = 'border-teal-200 bg-teal-50 text-teal-800'
-  }
-  if (critCount > 0 && status === 'unsaved') {
-    label = `${critCount} required · Unsaved`
-    icon = <AlertCircle className="h-3 w-3 text-amber-600" />
-  }
+  const icon =
+    report.status === 'needs-attention' ? (
+      <AlertCircle className="h-3 w-3" />
+    ) : report.status === 'almost-ready' ? (
+      <AlertTriangle className="h-3 w-3" />
+    ) : report.status === 'customer-ready' ? (
+      <Sparkles className="h-3 w-3" />
+    ) : (
+      <CheckCircle2 className="h-3 w-3" />
+    )
   return (
     <div
+      title={`Readiness score ${report.score}/100`}
       className={cn(
-        // min-width keeps the toolbar from reflowing as the label changes
-        // between "Local Draft" / "Unsaved Changes" / "Ready to Generate".
         'inline-flex min-w-[164px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-medium',
-        color,
+        CHIP_TONE[report.status],
       )}
     >
       {icon}
-      {label}
+      {report.statusLabel}
+      <span className="tabular-nums opacity-70">· {report.score}</span>
+      {saveStatus === 'unsaved' && <span className="opacity-70">· Unsaved</span>}
     </div>
   )
+}
+
+// ---- Generation dispatch + download ------------------------------------------
+
+async function generate(mode: ExportModeId, data: OrderFormData): Promise<Uint8Array> {
+  switch (mode) {
+    case 'draft': {
+      const { generateDraftPdf } = await import('@/pdf/draftPdf')
+      return generateDraftPdf(data)
+    }
+    case 'fillable': {
+      const { generateFillablePdf } = await import('@/pdf/fillablePdf')
+      return generateFillablePdf(data)
+    }
+    case 'final': {
+      const { generateFinalPdf } = await import('@/pdf/finalPdf')
+      return generateFinalPdf(data)
+    }
+    case 'docx': {
+      const { generateDocx } = await import('@/pdf/docx')
+      return generateDocx(data)
+    }
+  }
+}
+
+function exportSuccessMessage(mode: ExportMode): string {
+  switch (mode.id) {
+    case 'draft':
+      return 'Draft PDF downloaded (watermarked, internal review).'
+    case 'fillable':
+      return 'Fillable PDF downloaded — customer fields remain editable.'
+    case 'final':
+      return 'Final PDF downloaded.'
+    case 'docx':
+      return 'Editable DOCX downloaded.'
+  }
 }
 
 function downloadBytes(bytes: Uint8Array, filename: string, mime: string) {
@@ -449,22 +475,6 @@ function downloadBytes(bytes: Uint8Array, filename: string, mime: string) {
   URL.revokeObjectURL(url)
 }
 
-function buildFileName(
-  data: ReturnType<typeof useStore>['data'],
-  kind: 'Final' | 'Fillable' | 'Editable',
-  ext: 'pdf' | 'docx',
-) {
-  // Sanitize the customer name: collapse whitespace/punctuation to single
-  // hyphens and trim, so filenames stay clean across OSes.
-  const cust =
-    (data.customer.legalName || 'Customer')
-      .trim()
-      .replace(/[^\w]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'Customer'
-  return `Quill-${cust}-Order-Form-${kind}.${ext}`
-}
-
 /** "just now" / "3 min ago" / "2:45 PM" for the last-saved indicator. */
 function formatSavedAgo(ts: number | null): string | null {
   if (!ts) return null
@@ -472,8 +482,5 @@ function formatSavedAgo(ts: number | null): string | null {
   if (diff < 45_000) return 'just now'
   const mins = Math.round(diff / 60_000)
   if (mins < 60) return `${mins} min ago`
-  return new Date(ts).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+  return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }

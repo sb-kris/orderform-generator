@@ -6,12 +6,79 @@
  * both the on-screen accordion and the PDF renderer can consume them.
  */
 export type TermClause = {
+  /** Stable id (never the title) — used to target net-term interpolation and
+   *  per-document text overrides so clause numbering/titles stay locked. */
+  id: string
   title: string
   paragraphs: string[]
 }
 
-export const TERMS: TermClause[] = [
+/** The four allowed net payment terms (days). Locked to these values. */
+export const NET_TERMS = [15, 30, 45, 60] as const
+export type NetTerm = (typeof NET_TERMS)[number]
+
+/** Spelled-out numerals for the legal clause. No dependency — values are fixed. */
+export const NET_TERM_WORDS: Record<number, string> = {
+  15: 'fifteen',
+  30: 'thirty',
+  45: 'forty-five',
+  60: 'sixty',
+}
+
+/** Coerce any stored value to a supported net term (guards old drafts). */
+function normalizeNetTerm(netDays: number): NetTerm {
+  return (NET_TERMS as readonly number[]).includes(netDays) ? (netDays as NetTerm) : 30
+}
+
+/**
+ * The one-line payment callout string. Single source shared by the app
+ * Subscription callout, the preview, the PDF, and the DOCX (via buildDocModel).
+ */
+export function payableNote(netDays: number): string {
+  return `Payable within ${normalizeNetTerm(netDays)} days upon the receipt of invoice.`
+}
+
+/**
+ * Locked SurveySparrow order-form terms with the payment clause's first sentence
+ * driven by the chosen net term, so the callout and the binding clause can never
+ * disagree.
+ *
+ * `overrides` is a per-document map (clause id → paragraphs) applied AFTER the
+ * net-term interpolation: any clause whose id is present has its paragraphs
+ * replaced wholesale (empty paragraphs dropped). Titles/numbering are NEVER
+ * overridden. BASE_TERMS itself is never mutated — overrides live with the draft.
+ */
+export function buildTerms(
+  netDays: number,
+  overrides?: Record<string, string[]>,
+): TermClause[] {
+  const n = normalizeNetTerm(netDays)
+  const spelled = NET_TERM_WORDS[n]
+  return BASE_TERMS.map((clause) => {
+    // Net-term interpolation targets the payment clause by id, not title.
+    let next = clause
+    if (clause.id === 'payment') {
+      const [, ...rest] = clause.paragraphs
+      next = {
+        ...clause,
+        paragraphs: [
+          `Invoices are payable within ${spelled} (${n}) days of the invoice date, unless a different net-term is expressly stated in the Subscription Details section.`,
+          ...rest,
+        ],
+      }
+    }
+    const override = overrides?.[clause.id]
+    if (override) {
+      const paragraphs = override.map((p) => p.trim()).filter(Boolean)
+      if (paragraphs.length) next = { ...next, paragraphs }
+    }
+    return next
+  })
+}
+
+const BASE_TERMS: TermClause[] = [
   {
+    id: 'agreement',
     title: '1. Order Form & Agreement',
     paragraphs: [
       'This Service Order Form (the "Order Form") is entered into by and between SurveySparrow Inc. ("SurveySparrow", "we", "us") and the Customer identified above ("Customer", "you"). This Order Form is governed by and incorporates by reference the SurveySparrow Terms of Service available at https://surveysparrow.com/terms/ and the Data Processing Addendum available at https://surveysparrow.com/dpa/ (collectively, the "Agreement").',
@@ -19,6 +86,7 @@ export const TERMS: TermClause[] = [
     ],
   },
   {
+    id: 'services-fees',
     title: '2. Subscription Services & Fees',
     paragraphs: [
       'Customer is subscribing to the services and quantities described in the Services table above (the "Subscription Services") for the subscription term specified in the Subscription Details section (the "Subscription Term").',
@@ -27,6 +95,7 @@ export const TERMS: TermClause[] = [
     ],
   },
   {
+    id: 'payment',
     title: '3. Payment Terms',
     paragraphs: [
       'Invoices are payable within thirty (30) days of the invoice date, unless a different net-term is expressly stated in the Subscription Details section.',
@@ -35,6 +104,7 @@ export const TERMS: TermClause[] = [
     ],
   },
   {
+    id: 'term-renewal',
     title: '4. Term & Renewal',
     paragraphs: [
       'The Subscription Term will begin on the Subscription Term Start Date and continue for the duration set out above. Upon expiration, the Subscription Term will automatically renew for successive periods of equal length unless either party provides written notice of non-renewal at least thirty (30) days prior to the end of the then-current term.',
@@ -42,30 +112,35 @@ export const TERMS: TermClause[] = [
     ],
   },
   {
+    id: 'confidentiality',
     title: '5. Confidentiality',
     paragraphs: [
       'Each party agrees to protect the other party\'s Confidential Information using at least the same degree of care it uses to protect its own confidential information of like importance, and in no event less than a reasonable degree of care. Confidential Information will be used only to perform obligations or exercise rights under this Order Form and the Agreement.',
     ],
   },
   {
+    id: 'warranties',
     title: '6. Warranties & Disclaimers',
     paragraphs: [
       'SurveySparrow warrants that the Subscription Services will materially conform to the applicable documentation during the Subscription Term. EXCEPT AS EXPRESSLY PROVIDED, THE SUBSCRIPTION SERVICES ARE PROVIDED "AS IS" AND SURVEYSPARROW DISCLAIMS ALL WARRANTIES, WHETHER EXPRESS, IMPLIED, STATUTORY OR OTHERWISE, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT.',
     ],
   },
   {
+    id: 'liability',
     title: '7. Limitation of Liability',
     paragraphs: [
       'TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT WILL EITHER PARTY BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, COVER OR PUNITIVE DAMAGES ARISING OUT OF OR RELATED TO THIS ORDER FORM. EACH PARTY\'S AGGREGATE LIABILITY WILL NOT EXCEED THE AMOUNTS PAID OR PAYABLE BY CUSTOMER UNDER THIS ORDER FORM IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE CLAIM.',
     ],
   },
   {
+    id: 'governing-law',
     title: '8. Governing Law',
     paragraphs: [
       'This Order Form is governed by the laws of the State of Delaware, without regard to its conflict-of-laws principles. The parties consent to the exclusive jurisdiction of the state and federal courts located in Delaware for any dispute arising out of or relating to this Order Form.',
     ],
   },
   {
+    id: 'entire-agreement',
     title: '9. Entire Agreement',
     paragraphs: [
       'This Order Form, together with the Agreement, constitutes the entire agreement between the parties regarding its subject matter and supersedes all prior or contemporaneous understandings. Any purchase order or additional or conflicting terms contained in Customer\'s ordering documents will be of no force or effect, unless expressly accepted in writing by an authorized SurveySparrow representative.',

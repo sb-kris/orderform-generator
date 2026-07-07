@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { PanelRightClose, X } from 'lucide-react'
 import { useStore } from '@/state/store'
-import { PreviewDocument } from './PreviewDocument'
+import { OrderFormDocument } from '@/documentTemplates/orderForm/OrderFormDocument'
 import { cn } from '@/lib/cn'
 import type { PreviewZoom } from '@/state/types'
 
@@ -31,7 +31,7 @@ export function PreviewCanvas({
   variant: 'pane' | 'drawer'
   onHide: () => void
 }) {
-  const { layout, setLayout } = useStore()
+  const { data, layout, setLayout } = useStore()
   const canvasRef = useRef<HTMLDivElement>(null)
   const [fitZoom, setFitZoom] = useState(1)
 
@@ -101,7 +101,7 @@ export function PreviewCanvas({
         style={{ padding: CANVAS_PAD }}
       >
         <div className="mx-auto" style={{ width: BASE_WIDTH, zoom } as CSSProperties}>
-          <PreviewDocument />
+          <OrderFormDocument data={data} />
         </div>
       </div>
     </div>

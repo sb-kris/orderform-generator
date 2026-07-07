@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "verify:pdf": "TSX_TSCONFIG_PATH=tsconfig.app.json tsx scripts/verify-pdf.mts",
+    "verify:docx": "TSX_TSCONFIG_PATH=tsconfig.app.json tsx scripts/verify-docx.mts",
+    "verify:qa": "TSX_TSCONFIG_PATH=tsconfig.app.json tsx scripts/verify-qa.mts",
+    "export:pdf:html-poc": "TSX_TSCONFIG_PATH=tsconfig.app.json tsx scripts/export-html-poc.mts"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.2.8",

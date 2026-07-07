@@ -68,11 +68,17 @@ export function SectionNavigation({
             className={cn(
               'group relative flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors',
               isActive
-                ? 'bg-teal-50 text-teal-800'
+                ? 'bg-teal-50 font-medium text-teal-800'
                 : 'text-slate-700 hover:bg-slate-100',
               collapsed && 'justify-center px-0',
             )}
           >
+            {isActive && !collapsed && (
+              <span
+                className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary"
+                aria-hidden
+              />
+            )}
             <span
               className={cn(
                 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[11px] font-bold tabular-nums',

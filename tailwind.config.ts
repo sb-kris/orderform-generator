@@ -64,6 +64,7 @@ const config: Config = {
           800: channel('c-amber-800'),
           900: channel('c-amber-900'),
         },
+        rose: scale('c-rose', [50, 100, 200, 500, 600, 700, 900]),
         emerald: scale('c-emerald', [50, 200, 700]),
         sky: scale('c-sky', [50, 200, 700]),
         purple: {
