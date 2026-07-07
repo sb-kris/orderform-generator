@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output / caches
+dist/
+build/
+.vite/
+.cache/
+.tmp/
+temp/
+coverage/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor / tooling
+.vscode/
+.idea/
+.claude/
+
+# OS / logs
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.local
+
+# Generated customer documents (order forms are produced client-side and
+# downloaded straight to the user's machine — none belong in the repo).
+# Fonts / images that the generators embed live under public/ and are kept.
+exports/
+generated/
+*.pdf
+*.docx
