@@ -3,7 +3,7 @@ import { Input } from '../ui/input'
 import { Textarea } from '../ui/textarea'
 import { Switch } from '../ui/switch'
 import { useStore } from '@/state/store'
-import { sectionCompleteness, validate } from '@/state/validation'
+import { sectionCompleteness, validate, sectionStarted } from '@/state/validation'
 
 export function BillingShippingSection() {
   const { data, update } = useStore()
@@ -40,6 +40,7 @@ export function BillingShippingSection() {
       description="Where invoices and any physical materials should be sent."
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).billing}
     >
       <div className="grid gap-5 md:grid-cols-2">
         <div className="rounded-lg border border-slate-200 bg-slate-50/40 p-4">

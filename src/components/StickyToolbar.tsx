@@ -36,13 +36,24 @@ type Toast = { id: number; text: string; variant: 'success' | 'warning' | 'info'
 
 export function StickyToolbar({
   report,
+  checked,
   onFocusIssue,
 }: {
   report: QaReport
+  /** Whether the readiness dashboard is active (a check has been run). */
+  checked: boolean
   onFocusIssue: (sectionId: string, fieldId?: string) => void
 }) {
-  const { data, saveDraft, loadDraft, reset, saveStatus, lastSavedAt, recordExport } =
-    useStore()
+  const {
+    data,
+    saveDraft,
+    loadDraft,
+    reset,
+    saveStatus,
+    lastSavedAt,
+    recordExport,
+    runReadinessCheck,
+  } = useStore()
   const [toasts, setToasts] = useState<Toast[]>([])
   const [downloading, setDownloading] = useState<ExportModeId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -98,6 +109,9 @@ export function StickyToolbar({
   /** Entry point for every export button; applies the mode's QA gating. */
   const requestExport = (modeId: ExportModeId) => {
     if (downloading) return
+    // Any export attempt counts as asking for validation — turn the readiness
+    // dashboard on so results (and any block/confirm) are visible from here on.
+    runReadinessCheck()
     const mode = EXPORT_MODES[modeId]
     const decision = getExportDecision(mode, report)
 
@@ -181,7 +195,7 @@ export function StickyToolbar({
           </div>
 
           <div className="ml-2 hidden shrink-0 flex-col items-start gap-0.5 lg:flex">
-            <ReadinessChip report={report} saveStatus={saveStatus} />
+            <ReadinessChip report={report} checked={checked} saveStatus={saveStatus} />
             {savedAgo && (
               <span className="pl-0.5 text-[10px] text-slate-400">Saved locally · {savedAgo}</span>
             )}
@@ -394,11 +408,23 @@ const CHIP_TONE: Record<ReadinessStatus, string> = {
 
 function ReadinessChip({
   report,
+  checked,
   saveStatus,
 }: {
   report: QaReport
+  checked: boolean
   saveStatus: 'clean' | 'unsaved' | 'saved'
 }) {
+  // Calm neutral chip until the user runs a readiness check.
+  if (!checked) {
+    return (
+      <div className="inline-flex min-w-[164px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+        <FileClock className="h-3 w-3" />
+        Draft &middot; not checked
+        {saveStatus === 'unsaved' && <span className="opacity-70">&middot; Unsaved</span>}
+      </div>
+    )
+  }
   const icon =
     report.status === 'needs-attention' ? (
       <AlertCircle className="h-3 w-3" />

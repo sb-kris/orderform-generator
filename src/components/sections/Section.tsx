@@ -15,6 +15,7 @@ export function Section({
   actions,
   errorCount = 0,
   complete = false,
+  started = false,
 }: {
   id: string
   number: string
@@ -24,10 +25,18 @@ export function Section({
   actions?: ReactNode
   errorCount?: number
   complete?: boolean
+  /** Whether the user has entered any data in this section yet. */
+  started?: boolean
 }) {
-  const { layout, toggleSectionCollapsed } = useStore()
+  const { layout, toggleSectionCollapsed, hasRunReadinessCheck } = useStore()
   const collapsed = layout.collapsedSections.includes(id)
   const open = !collapsed
+
+  // Progressive status: errors only surface once a readiness check has run.
+  // Before that the header stays calm — Not started, In progress, or Complete.
+  const showError = hasRunReadinessCheck && errorCount > 0
+  const showComplete = complete && (hasRunReadinessCheck || started)
+  const showInProgress = !showError && !showComplete && started
 
   return (
     <motion.section
@@ -49,9 +58,9 @@ export function Section({
           <span
             className={cn(
               'flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-[12px] font-bold tabular-nums transition-colors',
-              errorCount > 0
+              showError
                 ? 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200'
-                : complete
+                : showComplete
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200',
             )}
@@ -63,15 +72,20 @@ export function Section({
               <h2 className="font-display text-[18px] font-bold -tracking-[0.01em] text-slate-950">
                 {title}
               </h2>
-              {complete && errorCount === 0 && (
+              {showComplete && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700">
                   <Check className="h-3 w-3" /> Complete
                 </span>
               )}
-              {errorCount > 0 && (
+              {showError && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                   <AlertTriangle className="h-3 w-3" /> {errorCount}{' '}
                   {errorCount === 1 ? 'issue' : 'issues'}
+                </span>
+              )}
+              {showInProgress && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                  In progress
                 </span>
               )}
             </div>

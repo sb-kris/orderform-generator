@@ -3,7 +3,7 @@ import { Input } from '../ui/input'
 import { DateInput } from '../ui/date-input'
 import { ImageUpload } from '../ui/image-upload'
 import { useStore } from '@/state/store'
-import { validate, sectionCompleteness } from '@/state/validation'
+import { validate, sectionCompleteness, sectionStarted } from '@/state/validation'
 
 export function CustomerInfoSection() {
   const { data, update } = useStore()
@@ -19,6 +19,7 @@ export function CustomerInfoSection() {
       description="Basic identifiers for the customer and this order form."
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).customer}
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Customer Legal Name" htmlFor="customer.legalName" required className="sm:col-span-2">

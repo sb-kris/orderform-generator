@@ -18,7 +18,7 @@ import {
 } from '../ui/dialog'
 import { useStore } from '@/state/store'
 import type { BillingPeriod, PaymentMethod } from '@/state/types'
-import { sectionCompleteness, validate } from '@/state/validation'
+import { sectionCompleteness, validate, sectionStarted } from '@/state/validation'
 import { NET_TERMS, NET_TERM_WORDS, payableNote } from '@/lib/terms'
 
 const BILLING_PERIODS: BillingPeriod[] = [
@@ -75,6 +75,7 @@ export function SubscriptionDetailsSection() {
       description="Cadence and payment terms for the subscription."
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).subscription}
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Billing Period" required>

@@ -9,7 +9,7 @@ import { useStore } from '@/state/store'
 import { emptyLine, type ServiceLine } from '@/state/types'
 import { formatCurrency, parseNumber } from '@/lib/format'
 import { CURRENCIES, type CurrencyCode } from '@/lib/currency'
-import { validate, sectionCompleteness } from '@/state/validation'
+import { validate, sectionCompleteness, sectionStarted } from '@/state/validation'
 
 export function ServicesTable() {
   const { data, update, totals } = useStore()
@@ -55,6 +55,7 @@ export function ServicesTable() {
       description={`Line items · Subtotal = Price × Quantity · Currency: ${CURRENCIES[currency].label}`}
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).services}
       actions={
         <>
           <div className="hidden md:block">

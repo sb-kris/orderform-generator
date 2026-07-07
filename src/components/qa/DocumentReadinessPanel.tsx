@@ -6,8 +6,10 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   EyeOff,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react'
 import type { QaCheck, QaReport, ReadinessStatus } from '@/lib/qa/documentQa'
@@ -32,14 +34,55 @@ const HERO_ACCENT: Record<ReadinessStatus, string> = {
  */
 export function DocumentReadinessPanel({
   report,
+  checked,
+  onCheck,
   onFocusIssue,
 }: {
   report: QaReport
+  /** Whether a readiness check has been run — gates the full dashboard. */
+  checked: boolean
+  onCheck: () => void
   onFocusIssue: (sectionId: string, fieldId?: string) => void
 }) {
   const { ignoreWarning, restoreWarning } = useStore()
   const [showReviewed, setShowReviewed] = useState(false)
   const issues = [...report.errors, ...report.warnings]
+
+  // Calm draft state — shown before the user runs a readiness check, so a blank
+  // or in-progress form is never greeted with a wall of critical errors.
+  if (!checked) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-card">
+        <div className="h-1 w-full bg-slate-200" aria-hidden />
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+          <div
+            className="grid h-16 w-16 shrink-0 place-items-center rounded-full border-2 border-dashed border-slate-300 text-slate-400"
+            aria-hidden
+          >
+            <ClipboardCheck className="h-6 w-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Document readiness
+            </div>
+            <div className="mt-1 font-display text-[19px] font-bold text-slate-950">
+              Draft in progress
+            </div>
+            <p className="mt-0.5 text-[13px] text-slate-500">
+              Complete the sections below, then run a readiness check before export.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCheck}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[14px] font-semibold text-primary-foreground shadow-sm transition-transform hover:bg-primary/90 active:scale-[0.98]"
+          >
+            <ShieldCheck className="h-4 w-4" /> Check readiness
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-pop">

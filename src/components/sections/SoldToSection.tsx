@@ -1,7 +1,7 @@
 import { Field, Section } from './Section'
 import { Input } from '../ui/input'
 import { useStore } from '@/state/store'
-import { validate, sectionCompleteness } from '@/state/validation'
+import { validate, sectionCompleteness, sectionStarted } from '@/state/validation'
 
 export function SoldToSection() {
   const { data, update } = useStore()
@@ -17,6 +17,7 @@ export function SoldToSection() {
       description="Primary contact this order form is being sold to."
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).soldTo}
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name" htmlFor="soldTo.name" required>

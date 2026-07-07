@@ -25,7 +25,8 @@ const SIDEBAR_COLLAPSED = 60
 
 export function AppShell() {
   const [activeId, setActiveId] = useState('customer')
-  const { data, totals, layout, setLayout, expandSection } = useStore()
+  const { data, totals, layout, setLayout, expandSection, hasRunReadinessCheck, runReadinessCheck } =
+    useStore()
   const issues = useMemo(() => validate(data), [data])
   const report = useMemo(() => runDocumentQa(data), [data])
 
@@ -91,7 +92,11 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-background">
-      <StickyToolbar report={report} onFocusIssue={focusIssue} />
+      <StickyToolbar
+        report={report}
+        checked={hasRunReadinessCheck}
+        onFocusIssue={focusIssue}
+      />
 
       <div
         ref={containerRef}
@@ -107,7 +112,7 @@ export function AppShell() {
           <SectionNavigation
             activeId={activeId}
             onSelect={scrollTo}
-            issues={issues}
+            issues={hasRunReadinessCheck ? issues : []}
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() =>
               setLayout({ sidebarCollapsed: !sidebarCollapsed })
@@ -145,7 +150,12 @@ export function AppShell() {
           }}
         >
           <div className="grid gap-5">
-            <DocumentReadinessPanel report={report} onFocusIssue={focusIssue} />
+            <DocumentReadinessPanel
+              report={report}
+              checked={hasRunReadinessCheck}
+              onCheck={runReadinessCheck}
+              onFocusIssue={focusIssue}
+            />
             <CustomerInfoSection />
             <SoldToSection />
             <ServicesTable />

@@ -36,6 +36,45 @@ export function criticalIssues(data: OrderFormData): ValidationIssue[] {
 }
 
 /**
+ * Whether the user has entered any data in a section yet. Drives the calm,
+ * progressive section status (Not started → In progress → Complete) shown
+ * before a readiness check has been run — so a blank form never looks broken.
+ */
+export function sectionStarted(data: OrderFormData): Record<string, boolean> {
+  const c = data.customer
+  const s = data.subscription
+  const sig = data.signature
+  const hasSig = (p: { signatureName: string; name: string; image: unknown }) =>
+    !!(p.signatureName || p.name || p.image)
+  return {
+    customer: !!(
+      c.legalName ||
+      c.orderFormDate ||
+      c.pricingValidThrough ||
+      c.preparedBy ||
+      data.customerLogo
+    ),
+    soldTo: !!(data.soldTo.name || data.soldTo.email),
+    services: data.services.some(
+      (l) => l.description.trim() || l.price || l.quantity,
+    ),
+    billing: !!(
+      data.billing.billTo.name ||
+      data.billing.billTo.address ||
+      data.billing.shipTo.name ||
+      data.billing.shipTo.address
+    ),
+    subscription: !!s.startDate,
+    terms: false, // locked template — only reads "Complete" once validation runs
+    signature: hasSig(sig.customer) || hasSig(sig.surveysparrow),
+    purchaseOrder:
+      data.purchaseOrder.required === 'Yes'
+        ? !!(data.purchaseOrder.number || data.purchaseOrder.amount)
+        : false,
+  }
+}
+
+/**
  * A section is "complete" when it has no blocking issues **and** has at least
  * some non-empty content — used to render the green tick in section headers.
  */

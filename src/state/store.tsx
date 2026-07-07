@@ -21,6 +21,7 @@ import { parseNumber } from '@/lib/format'
 const STORAGE_KEY = 'quill-order-form-draft-v2'
 const STORAGE_TS_KEY = 'quill-order-form-draft-v2-savedAt'
 const LAYOUT_KEY = 'quill-layout-prefs-v1'
+const READINESS_KEY = 'quill-readiness-checked-v1'
 
 type Action =
   | { type: 'set'; data: OrderFormData }
@@ -58,6 +59,13 @@ type StoreValue = {
   setLayout: (patch: Partial<LayoutPrefs>) => void
   toggleSectionCollapsed: (id: string) => void
   expandSection: (id: string) => void
+  /**
+   * Whether the readiness dashboard has been "turned on" for this draft. Until
+   * then the form stays in a calm draft state (no critical-error dashboard,
+   * no per-section error badges). Set by "Check readiness" or any export.
+   */
+  hasRunReadinessCheck: boolean
+  runReadinessCheck: () => void
   /** Acknowledge a QA warning so it no longer counts against readiness. */
   ignoreWarning: (id: string, dependencyKey: string) => void
   /** Restore a previously-acknowledged warning. */
@@ -82,6 +90,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   })
   const [layout, setLayoutState] = useState<LayoutPrefs>(() => loadLayout())
   const [lastExport, setLastExport] = useState<{ type: string; at: number } | null>(null)
+  // Starts false on every fresh mount; the load effect re-enables it only when a
+  // saved draft that had already been checked is restored.
+  const [hasRunReadinessCheck, setHasRunReadinessCheck] = useState(false)
+
+  const runReadinessCheck = useCallback(() => {
+    setHasRunReadinessCheck(true)
+    try {
+      localStorage.setItem(READINESS_KEY, '1')
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const update = useCallback((patch: (prev: OrderFormData) => OrderFormData) => {
     dispatch({ type: 'update', patch })
@@ -92,6 +112,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'reset' })
     setSaveStatus('clean')
     setLastSavedAt(null)
+    // Back to the calm draft state — no lingering readiness dashboard.
+    setHasRunReadinessCheck(false)
+    try {
+      localStorage.removeItem(READINESS_KEY)
+    } catch {
+      /* ignore */
+    }
   }, [])
 
   /**
@@ -256,7 +283,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [data.services])
 
   useEffect(() => {
-    loadDraft()
+    const ok = loadDraft()
+    // Only restore the readiness-checked state for a real saved draft; a blank
+    // first-load always starts calm (and any stale flag is cleared).
+    if (ok) {
+      try {
+        if (localStorage.getItem(READINESS_KEY) === '1') setHasRunReadinessCheck(true)
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        localStorage.removeItem(READINESS_KEY)
+      } catch {
+        /* ignore */
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -273,6 +315,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLayout,
     toggleSectionCollapsed,
     expandSection,
+    hasRunReadinessCheck,
+    runReadinessCheck,
     ignoreWarning,
     restoreWarning,
     lastExport,
@@ -303,6 +347,7 @@ export function clearDraft() {
   try {
     localStorage.removeItem(STORAGE_KEY)
     localStorage.removeItem(STORAGE_TS_KEY)
+    localStorage.removeItem(READINESS_KEY)
   } catch {
     /* ignore */
   }

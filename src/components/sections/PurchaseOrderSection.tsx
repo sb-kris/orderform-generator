@@ -5,7 +5,7 @@ import { CurrencyInput } from '../ui/currency-input'
 import { RadioGroup, RadioGroupItem } from '../ui/radio-group'
 import { useStore } from '@/state/store'
 import { CURRENCIES } from '@/lib/currency'
-import { sectionCompleteness, validate } from '@/state/validation'
+import { sectionCompleteness, validate, sectionStarted } from '@/state/validation'
 
 export function PurchaseOrderSection() {
   const { data, update } = useStore()
@@ -36,6 +36,7 @@ export function PurchaseOrderSection() {
       description="Whether the customer requires a purchase order to accompany the invoice."
       errorCount={errorCount}
       complete={complete}
+      started={sectionStarted(data).purchaseOrder}
     >
       <Field label="Is a PO required?" required>
         <RadioGroup
