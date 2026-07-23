@@ -73,20 +73,47 @@ aliases `po.*`, `customer.date`, `paymentTerms.comments`). Recognised fields:
 `subscription.comments`, `terms.comments`,
 `customer.signature/name/designation/signDate`, `po.required/number/amount`. A
 PDF with none of these → "No recognizable order-form fields were found in this
-PDF." A non-PDF/corrupt file fails gracefully. Dates are parsed loosely
-(ISO / "Aug 01, 2026" / dd/mm/yyyy → ISO); PO amount is normalised to a number.
+PDF." A non-PDF/corrupt file fails gracefully.
 
-**Customer Review Received drawer** (right-side, never a modal): values grouped
-by section (Customer Information, Sold To, Billing & Shipping, Subscription
-Details, Subscription Details Review, Terms & Conditions Review,
-Execution/Signature, Purchase Order), each showing **Current vs Returned** with a
-**New / Changed / Same / Empty** status and per-field **Apply / Ignore**.
-Subscription and T&C comments render as prominent comment cards. Bulk: **Apply all safe
-changes** (only blank-field → non-empty, i.e. status New), **Ignore all**,
-**Close**. A non-empty existing value is **never** overwritten without an
-explicit Apply. Applying updates the builder + live preview and recalculates
-readiness. **Signature images can't be imported** — the drawer shows a note to
-review the PDF manually; only the typed-name signature field reads back.
+**Date normalisation** (`parseSmartDate`): imported date fields
+(`subscription.startDate`, `customer.signDate`) accept ordinals ("30th July
+2026"), month names full/abbreviated ("30 July 2026", "Jul 30, 2026",
+"30-Jul-2026"), ISO, and numeric orders. A numeric date where one part is > 12
+resolves unambiguously; when both are ≤ 12 (e.g. `07/08/2026`) it is
+**ambiguous** — the drawer shows the interpreted value (primary dd/mm) **and**
+the alternative (mm/dd) with a "please confirm" note and a date picker, and it is
+excluded from Apply-all-safe. If a date can't be parsed at all → **Needs
+correction**: the raw value is shown with a date picker to enter the correct one.
+
+**Missing field vs returned blank** — the model distinguishes a field **absent**
+from the PDF (`not-returned`, hidden) from one **present but blank**. A present
+blank over a non-empty current value is a **Cleared** change the user can apply.
+
+**Customer Review Received drawer** (right-side, never a modal). Sections in
+priority order: **Customer Comments**, **Commercial Changes**, **Customer
+Information**, **Sold To**, **Billing & Shipping**, **Execution / Signature**.
+Each row shows **Current vs Returned** with a status — **New / Changed / Cleared
+/ Same / Empty / Needs correction** — and status-appropriate actions:
+- New → Apply / Ignore · Changed → Apply / Keep current
+- Cleared → **Clear field** / Keep current · Needs correction → date picker + Apply corrected
+- Same / Empty → **no action** (hidden; a "N unchanged fields hidden" note is shown)
+Comments render as **prominent quoted cards** (Apply to draft / Keep separate);
+an already-matching comment shows **Already applied** (no Apply button). A fully
+blank signature block collapses to one info card ("No customer signature details
+were returned…") instead of empty per-field cards. A compact **import summary**
+(source filename + counts of comments / new / changed / cleared / unchanged)
+sits at the top.
+
+**Apply all safe changes** applies only **New** values (current blank → returned
+non-empty) with a cleanly parsed, **unambiguous** value. It never auto-applies
+Changed, Cleared, ambiguous dates, failed parses, or a comment over an existing
+one. A non-empty existing value is **never** overwritten without an explicit
+Apply. Applying updates the builder + live preview + readiness and marks the row
+**Applied**; the drawer stays open.
+
+**PO clearing:** a returned PDF with `po.required = Yes` but blank `po.number` /
+`po.amount` shows PO Required = **Same** and the number/amount = **Cleared**;
+applying removes them from the builder.
 
 Readback caveat: filling a PDF outside Quill does not sync back automatically —
 to include accepted changes in the **Final PDF**, apply them in the drawer (or

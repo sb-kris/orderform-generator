@@ -6,12 +6,14 @@
  * values can be reviewed and selectively applied. Deliberately tolerant:
  *  - not every PDF has every field;
  *  - legacy/alternate field names are aliased;
- *  - a PDF with no recognisable fields returns `recognized: false` (the caller
- *    shows a friendly message) rather than throwing.
+ *  - a PDF with no recognisable fields returns `recognized: false`.
  *
- * This module never mutates the app — it produces a review model. Applying is
- * done field-by-field via the pure `apply()` functions on each descriptor, so
- * a non-empty existing value is only ever overwritten on an explicit Apply.
+ * The review model is a proper change-review:
+ *  - it distinguishes a field that is MISSING from the PDF from one that is
+ *    present but returned BLANK (a deliberate clear);
+ *  - dates are normalised with a forgiving parser (ordinals, month names,
+ *    several numeric orders) and flagged when ambiguous or unparseable;
+ *  - nothing is applied without an explicit action, and each `apply()` is pure.
  */
 import {
   PDFDocument,
@@ -26,325 +28,363 @@ import { PAYMENT_METHODS } from '@/state/types'
 import { formatCurrency, formatDate, parseNumber } from '@/lib/format'
 
 export type ReviewSection =
+  | 'comments'
+  | 'commercial'
   | 'customer'
   | 'soldTo'
   | 'billing'
-  | 'subscription'
-  | 'subscriptionReview'
-  | 'termsReview'
   | 'signature'
-  | 'purchaseOrder'
 
 export const SECTION_LABELS: Record<ReviewSection, string> = {
+  comments: 'Customer Comments',
+  commercial: 'Commercial Changes',
   customer: 'Customer Information',
   soldTo: 'Sold To',
   billing: 'Billing & Shipping',
-  subscription: 'Subscription Details',
-  subscriptionReview: 'Subscription Details Review',
-  termsReview: 'Terms & Conditions Review',
   signature: 'Execution / Signature',
-  purchaseOrder: 'Purchase Order',
 }
 
-export type ReviewStatus = 'new' | 'changed' | 'same' | 'empty'
+/** Priority order in the drawer — comments first, signature last. */
+const SECTION_ORDER: ReviewSection[] = [
+  'comments',
+  'commercial',
+  'customer',
+  'soldTo',
+  'billing',
+  'signature',
+]
 
-type Normalized = { ok: true; stored: string } | { ok: false; note: string }
+export type ReviewStatus =
+  | 'new' // current blank, returned non-empty
+  | 'changed' // current non-empty, returned different non-empty
+  | 'cleared' // current non-empty, returned blank (field present in PDF)
+  | 'same' // current and returned match
+  | 'empty' // both blank
+  | 'not-returned' // field absent from the PDF
+  | 'needs-correction' // returned value present but couldn't be parsed/normalised
+
+export type ParseStatus = 'parsed' | 'ambiguous' | 'failed' | 'notApplicable'
+
+type FieldKind = 'text' | 'date' | 'comment'
+type Validation = { ok: true; value: string } | { ok: false; note: string }
 
 type ReviewFieldDef = {
   id: string
   section: ReviewSection
   label: string
-  kind: 'value' | 'comment'
+  kind: FieldKind
   /** Primary field name first, then legacy/alternate aliases. */
   pdfNames: string[]
-  current: (d: OrderFormData) => string
-  /** Convert a raw returned string into the value we store (or explain why not). */
-  normalize: (returned: string, d: OrderFormData) => Normalized
-  apply: (d: OrderFormData, stored: string) => OrderFormData
+  /** Comparable/stored form of the current value (ISO for dates, raw otherwise). */
+  currentRaw: (d: OrderFormData) => string
+  /** Human display of the current value. */
+  currentDisplay: (d: OrderFormData) => string
+  /** Apply a stored value ('' clears the field). Pure. */
+  apply: (d: OrderFormData, storedRaw: string) => OrderFormData
+  /** Optional normalisation/validation for non-date text values. */
+  validate?: (returnedTrim: string) => Validation
 }
 
-// ---- Loose date parsing (fillable prefills a formatted/typed date) ----------
+// ---- Smart date parsing -----------------------------------------------------
+
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
+  september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-/** Parse ISO, "Aug 01, 2026", or dd/mm/yyyy (the field tooltip's format) → ISO, else null. */
-export function parseLooseDate(input: string): string | null {
-  const t = (input ?? '').trim()
-  if (!t) return null
-  // dd/mm/yyyy | dd-mm-yyyy | dd.mm.yyyy (tooltip says dd/mm/yyyy)
-  const dmy = /^(\d{1,2})[/.\- ](\d{1,2})[/.\- ](\d{4})$/.exec(t)
-  if (dmy) {
-    const dd = +dmy[1]
-    const mm = +dmy[2]
-    const yyyy = +dmy[3]
-    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-      const iso = `${yyyy}-${pad(mm)}-${pad(dd)}`
-      if (!Number.isNaN(new Date(iso).getTime())) return iso
+/** Build a validated ISO date, or null if the components don't form a real date. */
+function mkIso(y: number, mo: number, day: number): string | null {
+  if (mo < 1 || mo > 12 || day < 1 || day > 31) return null
+  const dt = new Date(y, mo - 1, day)
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== day) return null
+  return `${y}-${pad(mo)}-${pad(day)}`
+}
+
+export type DateParse =
+  | { status: 'parsed'; iso: string }
+  | { status: 'ambiguous'; iso: string; altIso: string }
+  | { status: 'failed' }
+
+/**
+ * Parse a human-entered date into ISO. Handles ordinals ("30th"), month names
+ * (case-insensitive, full or abbreviated), and several numeric orders. A purely
+ * numeric date where both leading parts are ≤ 12 (e.g. 07/08/2026) is reported
+ * `ambiguous` with both readings (primary = day/month, matching the field
+ * tooltip's dd/mm/yyyy hint).
+ */
+export function parseSmartDate(input: string): DateParse {
+  const t = (input ?? '')
+    .replace(/(\d{1,2})(st|nd|rd|th)\b/gi, '$1') // strip ordinals
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!t) return { status: 'failed' }
+
+  // ISO
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t)
+  if (m) {
+    const iso = mkIso(+m[1], +m[2], +m[3])
+    return iso ? { status: 'parsed', iso } : { status: 'failed' }
+  }
+  // D Month YYYY  ("30 July 2026", "30-Jul-2026")
+  m = /^(\d{1,2})[ \-]([A-Za-z]+)[ \-,]*(\d{4})$/.exec(t)
+  if (m) {
+    const mo = MONTHS[m[2].toLowerCase()]
+    const iso = mo ? mkIso(+m[3], mo, +m[1]) : null
+    if (iso) return { status: 'parsed', iso }
+  }
+  // Month D, YYYY  ("July 30, 2026", "Jul 30 2026")
+  m = /^([A-Za-z]+)[ ]+(\d{1,2})[ ,]+(\d{4})$/.exec(t)
+  if (m) {
+    const mo = MONTHS[m[1].toLowerCase()]
+    const iso = mo ? mkIso(+m[3], mo, +m[2]) : null
+    if (iso) return { status: 'parsed', iso }
+  }
+  // Numeric A/B/YYYY (/, - or .)
+  m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(t)
+  if (m) {
+    const a = +m[1]
+    const b = +m[2]
+    const y = +m[3]
+    if (a > 12 && b <= 12) {
+      const iso = mkIso(y, b, a) // dd/mm
+      if (iso) return { status: 'parsed', iso }
+    } else if (b > 12 && a <= 12) {
+      const iso = mkIso(y, a, b) // mm/dd
+      if (iso) return { status: 'parsed', iso }
+    } else if (a <= 12 && b <= 12) {
+      const dayFirst = mkIso(y, b, a) // dd/mm (primary — matches tooltip)
+      const monthFirst = mkIso(y, a, b) // mm/dd
+      if (dayFirst && monthFirst) return { status: 'ambiguous', iso: dayFirst, altIso: monthFirst }
+      if (dayFirst) return { status: 'parsed', iso: dayFirst }
+      if (monthFirst) return { status: 'parsed', iso: monthFirst }
     }
+    return { status: 'failed' }
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-    if (!Number.isNaN(new Date(t).getTime())) return t
+  // Last resort: the JS Date parser (covers a few more spellings).
+  const dt = new Date(t)
+  if (!Number.isNaN(dt.getTime())) {
+    return { status: 'parsed', iso: `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}` }
   }
-  const d = new Date(t)
-  if (!Number.isNaN(d.getTime())) return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-  return null
+  return { status: 'failed' }
 }
 
 // ---- Field descriptors (the mapping layer) ----------------------------------
 
-const identity = (returned: string): Normalized => ({ ok: true, stored: returned.trim() })
+const setCustomer = (d: OrderFormData, patch: Partial<OrderFormData['signature']['customer']>): OrderFormData => ({
+  ...d,
+  signature: { ...d.signature, customer: { ...d.signature.customer, ...patch } },
+})
 
 export const REVIEW_FIELDS: ReviewFieldDef[] = [
+  // ---- Customer Comments (most important review signal) --------------------
+  {
+    id: 'subscription.comments',
+    section: 'comments',
+    label: 'Customer comment on Subscription Details',
+    kind: 'comment',
+    pdfNames: ['subscription.comments', 'paymentTerms.comments'], // legacy alias
+    currentRaw: (d) => d.subscriptionComments,
+    currentDisplay: (d) => d.subscriptionComments,
+    apply: (d, v) => ({ ...d, subscriptionComments: v }),
+  },
+  {
+    id: 'terms.comments',
+    section: 'comments',
+    label: 'Customer comment on Terms & Conditions',
+    kind: 'comment',
+    pdfNames: ['terms.comments'],
+    currentRaw: (d) => d.termsComments,
+    currentDisplay: (d) => d.termsComments,
+    apply: (d, v) => ({ ...d, termsComments: v }),
+  },
+  // ---- Commercial ----------------------------------------------------------
+  {
+    id: 'subscription.startDate',
+    section: 'commercial',
+    label: 'Subscription Start Date',
+    kind: 'date',
+    pdfNames: ['subscription.startDate'],
+    currentRaw: (d) => d.subscription.startDate,
+    currentDisplay: (d) => formatDate(d.subscription.startDate),
+    apply: (d, v) => ({ ...d, subscription: { ...d.subscription, startDate: v } }),
+  },
+  {
+    id: 'subscription.paymentMethod',
+    section: 'commercial',
+    label: 'Payment Method',
+    kind: 'text',
+    pdfNames: ['subscription.paymentMethod'],
+    currentRaw: (d) => d.subscription.paymentMethod,
+    currentDisplay: (d) => d.subscription.paymentMethod,
+    apply: (d, v) => ({ ...d, subscription: { ...d.subscription, paymentMethod: v as PaymentMethod } }),
+    validate: (v) =>
+      (PAYMENT_METHODS as string[]).includes(v)
+        ? { ok: true, value: v }
+        : { ok: false, note: 'Not one of the standard payment methods.' },
+  },
+  {
+    id: 'purchaseOrder.required',
+    section: 'commercial',
+    label: 'PO Required',
+    kind: 'text',
+    pdfNames: ['po.required', 'purchaseOrder.required'],
+    currentRaw: (d) => d.purchaseOrder.required,
+    currentDisplay: (d) => d.purchaseOrder.required,
+    apply: (d, v) => ({ ...d, purchaseOrder: { ...d.purchaseOrder, required: (v === 'Yes' ? 'Yes' : 'No') } }),
+    validate: (v) => {
+      const l = v.toLowerCase()
+      if (l === 'yes') return { ok: true, value: 'Yes' }
+      if (l === 'no') return { ok: true, value: 'No' }
+      return { ok: false, note: 'Expected Yes or No.' }
+    },
+  },
+  {
+    id: 'purchaseOrder.number',
+    section: 'commercial',
+    label: 'PO Number',
+    kind: 'text',
+    pdfNames: ['po.number', 'purchaseOrder.number'],
+    currentRaw: (d) => d.purchaseOrder.number,
+    currentDisplay: (d) => d.purchaseOrder.number,
+    apply: (d, v) => ({ ...d, purchaseOrder: { ...d.purchaseOrder, number: v } }),
+  },
+  {
+    id: 'purchaseOrder.amount',
+    section: 'commercial',
+    label: 'PO Amount',
+    kind: 'text',
+    pdfNames: ['po.amount', 'purchaseOrder.amount'],
+    currentRaw: (d) => d.purchaseOrder.amount,
+    currentDisplay: (d) =>
+      d.purchaseOrder.amount ? formatCurrency(parseNumber(d.purchaseOrder.amount), d.currency) : '',
+    apply: (d, v) => ({ ...d, purchaseOrder: { ...d.purchaseOrder, amount: v } }),
+    validate: (v) => {
+      const n = parseNumber(v.replace(/[^0-9.]/g, ''))
+      return n > 0 ? { ok: true, value: String(n) } : { ok: false, note: 'Couldn’t read this as an amount.' }
+    },
+  },
+  // ---- Customer / Sold To / Billing ----------------------------------------
   {
     id: 'customer.legalName',
     section: 'customer',
     label: 'Customer Legal Name',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['customer.legalName'],
-    current: (d) => d.customer.legalName,
-    normalize: identity,
-    apply: (d, stored) => ({ ...d, customer: { ...d.customer, legalName: stored } }),
+    currentRaw: (d) => d.customer.legalName,
+    currentDisplay: (d) => d.customer.legalName,
+    apply: (d, v) => ({ ...d, customer: { ...d.customer, legalName: v } }),
   },
   {
     id: 'soldTo.name',
     section: 'soldTo',
     label: 'Name',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['soldTo.name'],
-    current: (d) => d.soldTo.name,
-    normalize: identity,
-    apply: (d, stored) => ({ ...d, soldTo: { ...d.soldTo, name: stored } }),
+    currentRaw: (d) => d.soldTo.name,
+    currentDisplay: (d) => d.soldTo.name,
+    apply: (d, v) => ({ ...d, soldTo: { ...d.soldTo, name: v } }),
   },
   {
     id: 'soldTo.email',
     section: 'soldTo',
     label: 'Email',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['soldTo.email'],
-    current: (d) => d.soldTo.email,
-    normalize: identity,
-    apply: (d, stored) => ({ ...d, soldTo: { ...d.soldTo, email: stored } }),
+    currentRaw: (d) => d.soldTo.email,
+    currentDisplay: (d) => d.soldTo.email,
+    apply: (d, v) => ({ ...d, soldTo: { ...d.soldTo, email: v } }),
   },
   {
     id: 'billing.name',
     section: 'billing',
     label: 'Bill To Name',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['billing.name'],
-    current: (d) => d.billing.billTo.name,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      billing: { ...d.billing, billTo: { ...d.billing.billTo, name: stored } },
-    }),
+    currentRaw: (d) => d.billing.billTo.name,
+    currentDisplay: (d) => d.billing.billTo.name,
+    apply: (d, v) => ({ ...d, billing: { ...d.billing, billTo: { ...d.billing.billTo, name: v } } }),
   },
   {
     id: 'billing.address',
     section: 'billing',
     label: 'Bill To Address',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['billing.address'],
-    current: (d) => d.billing.billTo.address,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      billing: { ...d.billing, billTo: { ...d.billing.billTo, address: stored } },
-    }),
+    currentRaw: (d) => d.billing.billTo.address,
+    currentDisplay: (d) => d.billing.billTo.address,
+    apply: (d, v) => ({ ...d, billing: { ...d.billing, billTo: { ...d.billing.billTo, address: v } } }),
   },
   {
     id: 'shipping.name',
     section: 'billing',
     label: 'Ship To Name',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['shipping.name'],
-    current: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.name : d.billing.shipTo.name),
-    normalize: identity,
-    // A returned ship-to means a distinct shipping address, so unlink from Bill To.
-    apply: (d, stored) => ({
+    currentRaw: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.name : d.billing.shipTo.name),
+    currentDisplay: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.name : d.billing.shipTo.name),
+    apply: (d, v) => ({
       ...d,
-      billing: { ...d.billing, sameAsBillTo: false, shipTo: { ...d.billing.shipTo, name: stored } },
+      billing: { ...d.billing, sameAsBillTo: false, shipTo: { ...d.billing.shipTo, name: v } },
     }),
   },
   {
     id: 'shipping.address',
     section: 'billing',
     label: 'Ship To Address',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['shipping.address'],
-    current: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.address : d.billing.shipTo.address),
-    normalize: identity,
-    apply: (d, stored) => ({
+    currentRaw: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.address : d.billing.shipTo.address),
+    currentDisplay: (d) => (d.billing.sameAsBillTo ? d.billing.billTo.address : d.billing.shipTo.address),
+    apply: (d, v) => ({
       ...d,
-      billing: {
-        ...d.billing,
-        sameAsBillTo: false,
-        shipTo: { ...d.billing.shipTo, address: stored },
-      },
+      billing: { ...d.billing, sameAsBillTo: false, shipTo: { ...d.billing.shipTo, address: v } },
     }),
   },
-  {
-    id: 'subscription.startDate',
-    section: 'subscription',
-    label: 'Start Date',
-    kind: 'value',
-    pdfNames: ['subscription.startDate'],
-    current: (d) => formatDate(d.subscription.startDate),
-    normalize: (returned) => {
-      const iso = parseLooseDate(returned)
-      return iso
-        ? { ok: true, stored: iso }
-        : { ok: false, note: 'Couldn’t read this as a date — enter it manually.' }
-    },
-    apply: (d, stored) => ({ ...d, subscription: { ...d.subscription, startDate: stored } }),
-  },
-  {
-    id: 'subscription.paymentMethod',
-    section: 'subscription',
-    label: 'Payment Method',
-    kind: 'value',
-    pdfNames: ['subscription.paymentMethod'],
-    current: (d) => d.subscription.paymentMethod,
-    normalize: (returned) => {
-      const v = returned.trim()
-      return (PAYMENT_METHODS as string[]).includes(v)
-        ? { ok: true, stored: v }
-        : { ok: false, note: 'Not one of the standard payment methods.' }
-    },
-    apply: (d, stored) => ({
-      ...d,
-      subscription: { ...d.subscription, paymentMethod: stored as PaymentMethod },
-    }),
-  },
-  {
-    id: 'subscription.comments',
-    section: 'subscriptionReview',
-    label: 'Customer comment on Subscription Details',
-    kind: 'comment',
-    // New name first; legacy paymentTerms.comments still imports into the same field.
-    pdfNames: ['subscription.comments', 'paymentTerms.comments'],
-    current: (d) => d.subscriptionComments,
-    normalize: identity,
-    apply: (d, stored) => ({ ...d, subscriptionComments: stored }),
-  },
-  {
-    id: 'terms.comments',
-    section: 'termsReview',
-    label: 'Customer comment on Terms & Conditions',
-    kind: 'comment',
-    pdfNames: ['terms.comments'],
-    current: (d) => d.termsComments,
-    normalize: identity,
-    apply: (d, stored) => ({ ...d, termsComments: stored }),
-  },
+  // ---- Execution / Signature -----------------------------------------------
   {
     id: 'customer.name',
     section: 'signature',
     label: 'Customer Name',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['customer.name'],
-    current: (d) => d.signature.customer.name,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      signature: { ...d.signature, customer: { ...d.signature.customer, name: stored } },
-    }),
+    currentRaw: (d) => d.signature.customer.name,
+    currentDisplay: (d) => d.signature.customer.name,
+    apply: (d, v) => setCustomer(d, { name: v }),
   },
   {
     id: 'customer.designation',
     section: 'signature',
     label: 'Customer Designation',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['customer.designation'],
-    current: (d) => d.signature.customer.designation,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      signature: { ...d.signature, customer: { ...d.signature.customer, designation: stored } },
-    }),
+    currentRaw: (d) => d.signature.customer.designation,
+    currentDisplay: (d) => d.signature.customer.designation,
+    apply: (d, v) => setCustomer(d, { designation: v }),
   },
   {
     id: 'customer.signDate',
     section: 'signature',
     label: 'Customer Sign Date',
-    kind: 'value',
+    kind: 'date',
     pdfNames: ['customer.signDate', 'customer.date'],
-    current: (d) => formatDate(d.signature.customer.date),
-    normalize: (returned) => {
-      const iso = parseLooseDate(returned)
-      return iso
-        ? { ok: true, stored: iso }
-        : { ok: false, note: 'Couldn’t read this as a date — enter it manually.' }
-    },
-    apply: (d, stored) => ({
-      ...d,
-      signature: { ...d.signature, customer: { ...d.signature.customer, date: stored } },
-    }),
+    currentRaw: (d) => d.signature.customer.date,
+    currentDisplay: (d) => formatDate(d.signature.customer.date),
+    apply: (d, v) => setCustomer(d, { date: v }),
   },
   {
     id: 'customer.signature',
     section: 'signature',
     label: 'Customer Signature (typed name)',
-    kind: 'value',
+    kind: 'text',
     pdfNames: ['customer.signature'],
-    current: (d) => d.signature.customer.signatureName,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      signature: {
-        ...d.signature,
-        customer: { ...d.signature.customer, type: 'typed', signatureName: stored },
-      },
-    }),
-  },
-  {
-    id: 'purchaseOrder.required',
-    section: 'purchaseOrder',
-    label: 'PO Required',
-    kind: 'value',
-    pdfNames: ['po.required', 'purchaseOrder.required'],
-    current: (d) => d.purchaseOrder.required,
-    normalize: (returned) => {
-      const v = returned.trim().toLowerCase()
-      if (v === 'yes') return { ok: true, stored: 'Yes' }
-      if (v === 'no') return { ok: true, stored: 'No' }
-      return { ok: false, note: 'Expected Yes or No.' }
-    },
-    apply: (d, stored) => ({
-      ...d,
-      purchaseOrder: { ...d.purchaseOrder, required: stored as 'Yes' | 'No' },
-    }),
-  },
-  {
-    id: 'purchaseOrder.number',
-    section: 'purchaseOrder',
-    label: 'PO Number',
-    kind: 'value',
-    pdfNames: ['po.number', 'purchaseOrder.number'],
-    current: (d) => d.purchaseOrder.number,
-    normalize: identity,
-    apply: (d, stored) => ({
-      ...d,
-      purchaseOrder: { ...d.purchaseOrder, number: stored },
-    }),
-  },
-  {
-    id: 'purchaseOrder.amount',
-    section: 'purchaseOrder',
-    label: 'PO Amount',
-    kind: 'value',
-    pdfNames: ['po.amount', 'purchaseOrder.amount'],
-    current: (d) =>
-      d.purchaseOrder.amount ? formatCurrency(parseNumber(d.purchaseOrder.amount), d.currency) : '',
-    normalize: (returned) => {
-      const digits = returned.replace(/[^0-9.]/g, '')
-      const n = parseNumber(digits)
-      return digits && n > 0
-        ? { ok: true, stored: String(n) }
-        : { ok: false, note: 'Couldn’t read this as an amount.' }
-    },
-    apply: (d, stored) => ({ ...d, purchaseOrder: { ...d.purchaseOrder, amount: stored } }),
+    currentRaw: (d) => d.signature.customer.signatureName,
+    currentDisplay: (d) => d.signature.customer.signatureName,
+    apply: (d, v) => setCustomer(d, { type: 'typed', signatureName: v }),
   },
 ]
 
@@ -378,7 +418,7 @@ export async function readPdfFields(bytes: Uint8Array): Promise<ReadResult> {
       values[name] = v
     }
   } catch {
-    // A PDF with no AcroForm at all → no values (recognized:false downstream).
+    /* no AcroForm — recognized:false below */
   }
   const recognized = Object.keys(values).some((n) => KNOWN_PDF_NAMES.has(n))
   return { ok: true, values, recognized }
@@ -390,17 +430,24 @@ export type ReviewItem = {
   id: string
   section: ReviewSection
   label: string
-  kind: 'value' | 'comment'
+  kind: FieldKind
+  fieldFound: boolean
+  returnedValue: string | null
   currentDisplay: string
   returnedDisplay: string
+  /** Stored form to apply (ISO for dates; '' for a clear). null when unparseable. */
+  normalizedValue: string | null
+  /** Human display of the normalised value (dates only). */
+  interpretedDisplay?: string
+  /** For ambiguous dates: the alternative reading, for display. */
+  ambiguousAltDisplay?: string
+  parseStatus: ParseStatus
   status: ReviewStatus
-  /** New + parseable → auto-appliable in "Apply all safe changes". */
+  /** Included in "Apply all safe changes". */
   safe: boolean
-  /** Whether Apply is possible (present, non-empty, and normalises cleanly). */
+  /** Whether Apply/Clear can proceed with the returned value as-is. */
   appliable: boolean
   note?: string
-  /** Normalised value to store when applied (present only when appliable). */
-  stored?: string
 }
 
 export type ReviewGroup = { section: ReviewSection; label: string; items: ReviewItem[] }
@@ -408,74 +455,131 @@ export type ReviewGroup = { section: ReviewSection; label: string; items: Review
 const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
 
 /** Build the grouped, current-vs-returned review model from extracted values. */
-export function buildReviewModel(
-  data: OrderFormData,
-  values: Record<string, string>,
-): ReviewGroup[] {
+export function buildReviewModel(data: OrderFormData, values: Record<string, string>): ReviewGroup[] {
   const bySection = new Map<ReviewSection, ReviewItem[]>()
 
   for (const def of REVIEW_FIELDS) {
     const presentName = def.pdfNames.find((n) => n in values)
-    if (!presentName) continue // field wasn't in this PDF — skip entirely
-    const returnedRaw = (values[presentName] ?? '').trim()
-    const currentDisplay = def.current(data)
+    if (!presentName) continue // field absent from PDF → 'not-returned', hidden
 
+    const returnedRaw = values[presentName] ?? ''
+    const returnedTrim = returnedRaw.trim()
+    const currentRaw = def.currentRaw(data)
+    const currentBlank = !currentRaw.trim()
+    const currentDisplay = def.currentDisplay(data)
+
+    let parseStatus: ParseStatus = 'notApplicable'
+    let normalizedValue: string | null = null
+    let interpretedDisplay: string | undefined
+    let ambiguousAltDisplay: string | undefined
+    let note: string | undefined
     let status: ReviewStatus
     let appliable = false
-    let stored: string | undefined
-    let note: string | undefined
 
-    if (!returnedRaw) {
-      status = 'empty'
+    if (returnedTrim === '') {
+      // Present but blank → a deliberate clear (or nothing, if current is blank).
+      normalizedValue = ''
+      status = currentBlank ? 'empty' : 'cleared'
+      appliable = status === 'cleared'
+    } else if (def.kind === 'date') {
+      const r = parseSmartDate(returnedTrim)
+      parseStatus = r.status
+      if (r.status === 'failed') {
+        status = 'needs-correction'
+        note = 'Couldn’t read this as a date — enter the corrected date.'
+      } else {
+        normalizedValue = r.iso
+        interpretedDisplay = formatDate(r.iso)
+        if (r.status === 'ambiguous') {
+          ambiguousAltDisplay = formatDate(r.altIso)
+          note = 'Ambiguous date — please confirm before applying.'
+        }
+        status = norm(r.iso) === norm(currentRaw) ? 'same' : currentBlank ? 'new' : 'changed'
+        appliable = true
+      }
     } else {
-      const n = def.normalize(returnedRaw, data)
-      if (n.ok) {
-        stored = n.stored
+      // text / comment
+      const v = def.validate ? def.validate(returnedTrim) : ({ ok: true, value: returnedTrim } as Validation)
+      if (v.ok) {
+        normalizedValue = v.value
         appliable = true
       } else {
-        note = n.note
+        note = v.note
       }
-      if (norm(returnedRaw) === norm(currentDisplay)) status = 'same'
-      else if (!currentDisplay.trim()) status = 'new'
-      else status = 'changed'
+      const cmp = normalizedValue ?? returnedTrim
+      status = norm(cmp) === norm(currentRaw) ? 'same' : currentBlank ? 'new' : 'changed'
     }
+
+    const safe = status === 'new' && appliable && parseStatus !== 'ambiguous'
 
     const item: ReviewItem = {
       id: def.id,
       section: def.section,
       label: def.label,
       kind: def.kind,
+      fieldFound: true,
+      returnedValue: returnedRaw,
       currentDisplay,
-      returnedDisplay: returnedRaw,
+      returnedDisplay: returnedTrim,
+      normalizedValue,
+      interpretedDisplay,
+      ambiguousAltDisplay,
+      parseStatus,
       status,
+      safe,
       appliable,
-      safe: status === 'new' && appliable,
       note,
-      stored,
     }
     const arr = bySection.get(def.section) ?? []
     arr.push(item)
     bySection.set(def.section, arr)
   }
 
-  const order: ReviewSection[] = [
-    'customer',
-    'soldTo',
-    'billing',
-    'subscription',
-    'subscriptionReview',
-    'termsReview',
-    'signature',
-    'purchaseOrder',
-  ]
-  return order
-    .filter((s) => bySection.has(s))
-    .map((s) => ({ section: s, label: SECTION_LABELS[s], items: bySection.get(s)! }))
+  return SECTION_ORDER.filter((s) => bySection.has(s)).map((s) => ({
+    section: s,
+    label: SECTION_LABELS[s],
+    items: bySection.get(s)!,
+  }))
 }
 
-/** Apply a single item's stored value to the data (pure). */
-export function applyReviewItem(data: OrderFormData, item: ReviewItem): OrderFormData {
-  if (!item.appliable || item.stored === undefined) return data
+/**
+ * Apply a review item's value to the data (pure). `override` supplies a
+ * user-corrected/confirmed value (e.g. a manually entered date, or an ISO
+ * chosen for an ambiguous date). For a cleared field the stored value is ''.
+ */
+export function applyReviewItem(
+  data: OrderFormData,
+  item: ReviewItem,
+  override?: string,
+): OrderFormData {
   const def = REVIEW_FIELDS.find((f) => f.id === item.id)
-  return def ? def.apply(data, item.stored) : data
+  if (!def) return data
+  let value: string | null
+  if (override !== undefined) value = override
+  else if (item.status === 'cleared') value = ''
+  else value = item.normalizedValue
+  if (value === null) return data // needs-correction with no override — nothing to apply
+  return def.apply(data, value)
+}
+
+export type ReviewSummary = {
+  comments: number
+  newCount: number
+  changed: number
+  cleared: number
+  needsCorrection: number
+  unchanged: number
+}
+
+/** Counts for the drawer's import summary. */
+export function summarizeReview(groups: ReviewGroup[]): ReviewSummary {
+  const items = groups.flatMap((g) => g.items)
+  return {
+    comments: items.filter((i) => i.kind === 'comment' && !!i.returnedDisplay).length,
+    newCount: items.filter((i) => i.status === 'new').length,
+    changed: items.filter((i) => i.status === 'changed').length,
+    cleared: items.filter((i) => i.status === 'cleared').length,
+    needsCorrection: items.filter((i) => i.status === 'needs-correction').length,
+    unchanged: items.filter((i) => i.status === 'same' || i.status === 'empty').length,
+  }
 }

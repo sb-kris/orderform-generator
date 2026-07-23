@@ -176,7 +176,8 @@ export function StickyToolbar({
     }
   }
 
-  const applyReview = (item: ReviewItem) => update((prev) => applyReviewItem(prev, item))
+  const applyReview = (item: ReviewItem, override?: string) =>
+    update((prev) => applyReviewItem(prev, item, override))
   const applyReviewAll = (items: ReviewItem[]) =>
     update((prev) => items.reduce((d, it) => applyReviewItem(d, it), prev))
 
