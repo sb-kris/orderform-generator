@@ -84,7 +84,9 @@
   color: var(--odoc-accent-deep);
 }
 
-/* Legal terms — readable, formal, never marketing-y. */
+/* Legal terms — readable, formal, never marketing-y. Comfortable vertical
+   rhythm: clear gap before each clause, small gap under the heading, and a
+   visible paragraph-to-paragraph gap so clauses never read as a dense block. */
 .odoc-clause {
   break-inside: avoid;
 }
@@ -93,13 +95,18 @@
   font-weight: 700;
   color: var(--odoc-ink);
   break-after: avoid;
+  margin-bottom: 2px;
 }
 .odoc-legal {
   font-size: 10.5px;
-  line-height: 1.6;
-  margin-top: 3px;
+  line-height: 1.65;
+  margin-top: 7px;
   color: rgb(71, 85, 105);
-  text-align: justify;
+  text-align: left;
+}
+/* Heading → first paragraph: close, but not touching (tighter than para gap). */
+.odoc-clause-title + .odoc-legal {
+  margin-top: 4px;
 }
 
 /* Commercial summary card. */

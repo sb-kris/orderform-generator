@@ -193,7 +193,7 @@ export function OrderFormDocument({
         </Section>
 
         <Section num="06" title="Terms & Conditions">
-          <div className="space-y-3">
+          <div className="space-y-4">
             {buildTerms(data.subscription, data.termOverrides ?? {}).map((t) => (
               <div key={t.title} className="odoc-clause">
                 <div className="odoc-clause-title">{t.title}</div>

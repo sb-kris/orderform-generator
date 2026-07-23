@@ -529,14 +529,19 @@ function termsParagraphs(terms: TermClause[]): Paragraph[] {
   terms.forEach((t) => {
     out.push(
       new Paragraph({
-        spacing: { before: 180, after: 60 },
+        // Clear gap before each clause heading; `keepNext` keeps the heading
+        // with its first paragraph so a clause title never orphans at a page end.
+        spacing: { before: 260, after: 90 },
+        keepNext: true,
         children: [new TextRun({ text: t.title, bold: true, size: 20, color: SLATE_950 })],
       }),
     )
     t.paragraphs.forEach((p) => {
       out.push(
         new Paragraph({
-          spacing: { after: 60 },
+          // Visible paragraph-to-paragraph breathing room + comfortable line
+          // height (~1.5×) for legal reading; not one dense block.
+          spacing: { after: 140, line: 288, lineRule: 'auto' },
           children: [new TextRun({ text: p, size: 18, color: SLATE_700 })],
         }),
       )

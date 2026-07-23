@@ -656,7 +656,11 @@ function renderCommentsBlock(
 
   if (fillable) {
     const boxH = 46
-    keepTogether(l, 16 + boxH + 8)
+    // Keep label + box together; only break to a new page when it genuinely
+    // doesn't fit below the current content (tight cushion, not the generous
+    // section-level one), so the box sits under the last clause whenever it can.
+    const needed = 14 + boxH + 8
+    if (l.y - needed < PAGE.marginBottom + 4) newPage(l)
     l.page.drawText(label, {
       x: PAGE.marginX,
       y: l.y - 9,
@@ -694,7 +698,10 @@ function renderCommentsBlock(
 
   // Static (Final / Draft) — comments guaranteed non-empty here.
   const bodyLines = wrapText(comments, l.fonts.regular, 8.75, CONTENT_W - 4)
-  keepTogether(l, 16 + bodyLines.length * 12 + 6)
+  // Keep the label + all comment lines together; break only if they don't fit
+  // below the last clause (tight cushion), never split label from body.
+  const needed = 14 + bodyLines.length * 12 + 6
+  if (l.y - needed < PAGE.marginBottom + 4) newPage(l)
   l.page.drawText(label, {
     x: PAGE.marginX,
     y: l.y - 9,
@@ -716,28 +723,51 @@ function renderCommentsBlock(
   l.y -= 6
 }
 
+// Terms typesetting rhythm (points). Tuned for comfortable legal reading
+// without wasting pages: a clear gap before each clause heading, a small gap
+// under the heading, a visible paragraph-to-paragraph gap, and a slightly
+// larger clause-to-clause gap.
+const TERMS_TITLE_SIZE = 10
+const TERMS_BODY_SIZE = 9
+const TERMS_BODY_LEADING = 13.5 // ~1.5× — comfortable for legal copy
+const TERMS_AFTER_TITLE = 4 // heading → first paragraph
+const TERMS_PARA_GAP = 5 // paragraph → paragraph within a clause
+const TERMS_CLAUSE_GAP = 10 // clause → clause (> paragraph gap)
+
 function renderTerms(l: Layout, terms: TermClause[]) {
   drawSectionHeading(l, '06', 'Terms & Conditions')
 
   let lastPageIndex = l.pages.length - 1
-  terms.forEach((t) => {
-    keepTogether(l, 28)
+  terms.forEach((t, ci) => {
+    if (ci > 0) l.y -= TERMS_CLAUSE_GAP
+    // Orphan control: reserve the heading + its gap + the first two body lines
+    // so a clause heading never sits alone at the bottom of a page (it always
+    // pulls at least the start of its first paragraph onto the same page).
+    keepTogether(l, TERMS_TITLE_SIZE + TERMS_AFTER_TITLE + TERMS_BODY_LEADING * 2 + 6)
     if (l.pages.length - 1 !== lastPageIndex) {
       drawSectionHeading(l, '06', 'Terms & Conditions', true)
       lastPageIndex = l.pages.length - 1
     }
     drawWrappedText(l, t.title, {
       weight: 'bold',
-      size: 9.5,
+      size: TERMS_TITLE_SIZE,
+      leading: TERMS_TITLE_SIZE * 1.35,
       color: COLORS.slate950,
     })
-    t.paragraphs.forEach((p) => {
+    l.y -= TERMS_AFTER_TITLE
+    t.paragraphs.forEach((p, pi) => {
+      if (pi > 0) l.y -= TERMS_PARA_GAP
       const prev = l.pages.length - 1
-      drawWrappedText(l, p, { size: 8.75, leading: 12.25, color: COLORS.slate700 })
+      drawWrappedText(l, p, {
+        size: TERMS_BODY_SIZE,
+        leading: TERMS_BODY_LEADING,
+        color: COLORS.slate700,
+      })
       if (l.pages.length - 1 !== prev) lastPageIndex = l.pages.length - 1
     })
-    l.y -= 4
   })
+  // Small breathing room before whatever follows (e.g. the T&C comments block).
+  l.y -= 6
 }
 
 // -------- Execution + Purchase Order ------------------------------------------

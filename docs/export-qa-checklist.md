@@ -123,9 +123,16 @@ The build has no rasterizer, so these are manual on a machine with a PDF viewer.
   render as plain text **only when the app data has comments** (never an empty
   box). The **DOCX** always includes both labelled areas (text or a blank ruled
   line) since it is the redline artefact.
-- **Page 3 — legal & signature:** Terms readable (line-height, clause headers,
-  no orphaned heading at page bottom, "…continued" when they span pages);
-  Execution cards balanced; typed signature restrained; uploaded signature fits.
+- **Page 3 — legal & signature:** Terms are professionally typeset — comfortable
+  line-height (~1.5×), a clear gap **before** each numbered clause heading, a
+  small gap under the heading, a visible paragraph-to-paragraph gap, and a
+  slightly larger clause-to-clause gap (never one dense block); consistent **left
+  alignment**; no orphaned clause heading at a page bottom (the heading always
+  keeps at least the start of its first paragraph); "…CONTINUED" header when the
+  section spans pages. The **T&C comments** box (and the Payment Terms comments
+  box) sit **directly below their section when they fit**, and only move to the
+  next page when they genuinely don't — the label + box are never split. Execution
+  cards balanced; typed signature restrained; uploaded signature fits.
 - **Editable legal text (app-only guardrail):** The "Unlock to edit" affordance
   is an **accidental-change guardrail, not security**. Unlocking requires typing
   the exact word **`CHANGE`** (case-sensitive) in a confirmation step — nothing is
