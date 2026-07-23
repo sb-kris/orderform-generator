@@ -169,8 +169,10 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
               }),
             ],
           }),
+          ...commentsBlock('Payment Terms Comments', m.paymentTermsComments),
           ...sectionHeading('06', 'Terms & Conditions'),
-          ...termsParagraphs(buildTerms(data.subscription.paymentTermDays ?? 30, data.termOverrides ?? {})),
+          ...termsParagraphs(buildTerms(data.subscription, data.termOverrides ?? {})),
+          ...commentsBlock('Terms & Conditions Comments', m.termsComments),
           ...sectionHeading('07', 'Execution / Signature', true),
           new Paragraph({
             spacing: { after: 100 },
@@ -326,7 +328,7 @@ function kvTable(rows: KV[][]): Table {
 function servicesTable(m: DocModel): Table {
   const header = new TableRow({
     tableHeader: true,
-    children: ['Line Item', 'Price', 'Quantity', 'Sub-Total'].map(
+    children: ['Line Item', 'Price', 'Qty / Unit', 'Sub-Total'].map(
       (label, i) =>
         new TableCell({
           shading: { fill: SLATE_WASH },
@@ -413,7 +415,7 @@ function servicesTable(m: DocModel): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     layout: TableLayoutType.FIXED,
-    columnWidths: [4680, 1560, 1400, 1720],
+    columnWidths: [4160, 1500, 1900, 1800],
     borders: hRuleBorders(SLATE_200, 4),
     rows: [header, ...bodyRows, totalRow],
   })
@@ -492,6 +494,34 @@ function addressCell(label: string, name: string, address: string): TableCell {
       ),
     ],
   })
+}
+
+/**
+ * Optional customer-review comment block (reused for Payment Terms and Terms &
+ * Conditions). The DOCX is the editable/redline artefact, so it always offers a
+ * labelled area: the comments text when present, else a single ruled blank line
+ * to write on.
+ */
+function commentsBlock(label: string, text: string): Paragraph[] {
+  const has = !!text
+  return [
+    new Paragraph({
+      spacing: { before: 140, after: 40 },
+      children: [
+        new TextRun({ text: label.toUpperCase(), bold: true, size: 13, color: SLATE_500 }),
+      ],
+    }),
+    has
+      ? new Paragraph({
+          spacing: { after: 40 },
+          children: [new TextRun({ text, size: 18, color: SLATE_700 })],
+        })
+      : new Paragraph({
+          spacing: { after: 40 },
+          border: { bottom: { color: SLATE_200, style: BorderStyle.SINGLE, size: 6, space: 3 } },
+          children: [new TextRun({ text: ' ', size: 18 })],
+        }),
+  ]
 }
 
 function termsParagraphs(terms: TermClause[]): Paragraph[] {

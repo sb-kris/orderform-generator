@@ -159,6 +159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 description: s.description ?? '',
                 price: s.price ?? '',
                 quantity: s.quantity ?? '',
+                unit: s.unit ?? '', // backward-compat: drafts predating the unit field
               }))
             : Array.from({ length: 6 }, emptyLine),
         billing: {
@@ -168,6 +169,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           shipTo: { ...base.billing.shipTo, ...parsed.billing?.shipTo },
         },
         subscription: { ...base.subscription, ...parsed.subscription },
+        paymentTermsComments: parsed.paymentTermsComments ?? base.paymentTermsComments,
+        termsComments: parsed.termsComments ?? base.termsComments,
         customerLogo: parsed.customerLogo ?? base.customerLogo,
         ignoredWarnings: parsed.ignoredWarnings ?? base.ignoredWarnings,
         termOverrides: parsed.termOverrides ?? base.termOverrides,

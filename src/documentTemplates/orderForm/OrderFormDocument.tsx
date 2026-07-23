@@ -13,7 +13,7 @@
 import { motion } from 'motion/react'
 import { useMemo } from 'react'
 import type { OrderFormData, Signature } from '@/state/types'
-import { formatCurrency, formatDate, parseNumber } from '@/lib/format'
+import { formatCurrency, formatDate, formatQuantityWithUnit, parseNumber } from '@/lib/format'
 import { buildDocModel } from '@/lib/docModel'
 import { CURRENCIES } from '@/lib/currency'
 import { buildTerms } from '@/lib/terms'
@@ -117,9 +117,9 @@ export function OrderFormDocument({
           <table>
             <thead>
               <tr>
-                <th style={{ width: '52%' }}>Line Item</th>
+                <th style={{ width: '46%' }}>Line Item</th>
                 <th style={{ width: '18%', textAlign: 'right' }}>Price</th>
-                <th style={{ width: '10%', textAlign: 'right' }}>Quantity</th>
+                <th style={{ width: '16%', textAlign: 'right' }}>Qty / Unit</th>
                 <th style={{ width: '20%', textAlign: 'right' }}>Sub-Total</th>
               </tr>
             </thead>
@@ -139,7 +139,9 @@ export function OrderFormDocument({
                       <td className={cn('text-right', l.price && 'filled')}>
                         {l.price ? formatCurrency(parseNumber(l.price), currency) : '—'}
                       </td>
-                      <td className={cn('text-right', l.quantity && 'filled')}>{l.quantity || '—'}</td>
+                      <td className={cn('text-right', l.quantity && 'filled')}>
+                        {formatQuantityWithUnit(l.quantity, l.unit) || '—'}
+                      </td>
                       <td className="text-right filled">{formatCurrency(sub, currency)}</td>
                     </tr>
                   )
@@ -178,15 +180,21 @@ export function OrderFormDocument({
             />
           </FieldRow>
           <FieldRow>
-            <Field label="Start Date" value={formatDate(data.subscription.startDate)} required />
-            <Field label="Payment Method" value={data.subscription.paymentMethod} required />
+            <Field label="Start Date" value={formatDate(data.subscription.startDate)} optional />
+            <Field label="Payment Method" value={data.subscription.paymentMethod} optional />
           </FieldRow>
           <p className="odoc-callout">{model.payableNote}</p>
+          {model.paymentTermsComments && (
+            <div className="odoc-comments">
+              <div className="odoc-comments-label">Payment Terms Comments</div>
+              <div className="odoc-comments-body">{model.paymentTermsComments}</div>
+            </div>
+          )}
         </Section>
 
         <Section num="06" title="Terms & Conditions">
           <div className="space-y-3">
-            {buildTerms(data.subscription.paymentTermDays ?? 30, data.termOverrides ?? {}).map((t) => (
+            {buildTerms(data.subscription, data.termOverrides ?? {}).map((t) => (
               <div key={t.title} className="odoc-clause">
                 <div className="odoc-clause-title">{t.title}</div>
                 {t.paragraphs.map((p, j) => (
@@ -197,6 +205,12 @@ export function OrderFormDocument({
               </div>
             ))}
           </div>
+          {model.termsComments && (
+            <div className="odoc-comments">
+              <div className="odoc-comments-label">Terms &amp; Conditions Comments</div>
+              <div className="odoc-comments-body">{model.termsComments}</div>
+            </div>
+          )}
         </Section>
 
         <Section num="07" title="Execution / Signature">
@@ -268,7 +282,18 @@ function FieldRow({ children }: { children: React.ReactNode }) {
   return <div className="mt-2 grid grid-cols-2 gap-3">{children}</div>
 }
 
-function Field({ label, value, required }: { label: string; value?: string; required?: boolean }) {
+function Field({
+  label,
+  value,
+  required,
+  optional,
+}: {
+  label: string
+  value?: string
+  required?: boolean
+  /** Blank optional fields show an empty box — never the `{{Label}}` token. */
+  optional?: boolean
+}) {
   const filled = !!value?.trim()
   return (
     <div>
@@ -277,7 +302,7 @@ function Field({ label, value, required }: { label: string; value?: string; requ
         {required && <span className="ml-1 text-red-500">*</span>}
       </div>
       <div className={cn('doc-field', filled && 'filled')}>
-        {filled ? value : `{{${label.replace(/[^\w]+/g, '_')}}}`}
+        {filled ? value : optional ? '' : `{{${label.replace(/[^\w]+/g, '_')}}}`}
       </div>
     </div>
   )

@@ -91,6 +91,19 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Line-item descriptions longer than this risk truncation in the PDF table. */
 const LINE_ITEM_OVERFLOW_CHARS = 58
+
+/** Line-item keywords whose quantity usually reads clearer with a unit. */
+const UNIT_HINT_KEYWORDS = [
+  'storage',
+  'data',
+  'bandwidth',
+  'email',
+  'sms',
+  'credit',
+  'user',
+  'seat',
+  'hour',
+]
 /** Base64 payloads larger than this (~1.4 MB decoded) may render poorly / bloat. */
 const LARGE_LOGO_DATAURL_CHARS = 1_400_000
 
@@ -308,6 +321,27 @@ export function runDocumentQa(data: OrderFormData): QaReport {
         suggestedFix: 'Shorten the description or move detail into a follow-up note.',
       })
     }
+
+    // Low-severity nudge: quantity-of-a-thing line items read clearer with a
+    // unit (Storage "50" -> "50 GB"). Optional + ignorable; never blocks export.
+    const unitless = populated.filter(
+      (l) =>
+        parseNumber(l.quantity) > 0 &&
+        !(l.unit ?? '').trim() &&
+        UNIT_HINT_KEYWORDS.some((k) => l.description.toLowerCase().includes(k)),
+    )
+    if (unitless.length > 0) {
+      add({
+        id: 'services.unit',
+        sectionId: 'services',
+        fieldId: 'services',
+        dependencyKey: unitless.map((l) => `${l.description}:${l.quantity}`).join('|'),
+        status: 'warning',
+        severity: 'low',
+        message: `${unitless.length} line item${unitless.length === 1 ? '' : 's'} may need a unit so the quantity is clear (e.g. GB, mo, EMAILS).`,
+        suggestedFix: 'Add a short unit next to the quantity, or mark reviewed if the quantity is self-explanatory.',
+      })
+    }
   }
 
   // ---- Billing / Shipping ---------------------------------------------------
@@ -361,24 +395,57 @@ export function runDocumentQa(data: OrderFormData): QaReport {
     'Subscription term must be a positive number of months.',
     'Enter the contract length in months (e.g. 12).',
   )
-  req(
-    !!data.subscription.startDate,
-    'subscription.startDate',
-    'subscription',
-    'subscription.startDate',
-    'Subscription start date',
-    'Subscription start date is missing.',
-    'Set when the subscription begins.',
-  )
-  // Payment method is a constrained select and always has a value.
+  // Start date is OPTIONAL — a form is often sent for review before it is set.
+  // Warn (reviewable), never block.
+  const hasStart = !!data.subscription.startDate
+  add({
+    id: 'subscription.startDate',
+    sectionId: 'subscription',
+    fieldId: 'subscription.startDate',
+    dependencyKey: hasStart ? 'set' : 'blank',
+    status: hasStart ? 'pass' : 'warning',
+    severity: hasStart ? 'info' : 'low',
+    message: hasStart
+      ? `Subscription starts ${model.subscription.startDate}.`
+      : 'Subscription start date is blank. This may be completed after customer review.',
+    suggestedFix: hasStart
+      ? ''
+      : 'Add a start date before the order form is signed, or mark reviewed.',
+  })
+  // Payment method is OPTIONAL for the same reason. Warn (reviewable), never block.
+  const hasPay = !!(data.subscription.paymentMethod || '').trim()
   add({
     id: 'subscription.paymentMethod',
     sectionId: 'subscription',
-    status: 'pass',
-    severity: 'info',
-    message: `Payment method is ${data.subscription.paymentMethod}.`,
-    suggestedFix: '',
+    dependencyKey: hasPay ? data.subscription.paymentMethod : 'blank',
+    status: hasPay ? 'pass' : 'warning',
+    severity: hasPay ? 'info' : 'low',
+    message: hasPay
+      ? `Payment method is ${data.subscription.paymentMethod}.`
+      : 'Payment method is blank. This may be completed after customer review.',
+    suggestedFix: hasPay
+      ? ''
+      : 'Select a payment method before signing, or mark reviewed.',
   })
+  // Custom payment term with no wording yet — the legal clause falls back to a
+  // generic phrase. Reviewable, never blocking (matches the optional-field policy).
+  if (data.subscription.paymentTermMode === 'custom') {
+    const hasCustom = !!(data.subscription.paymentTermCustom || '').trim()
+    add({
+      id: 'subscription.paymentTermCustom',
+      sectionId: 'subscription',
+      fieldId: 'subscription.paymentTermCustom',
+      dependencyKey: hasCustom ? 'set' : 'blank',
+      status: hasCustom ? 'pass' : 'warning',
+      severity: hasCustom ? 'info' : 'low',
+      message: hasCustom
+        ? 'Custom payment term wording is set.'
+        : 'Payment term is set to Custom but no wording has been entered.',
+      suggestedFix: hasCustom
+        ? ''
+        : 'Enter the custom payment term wording, or choose a standard net term.',
+    })
+  }
 
   // ---- Purchase Order -------------------------------------------------------
   if (data.purchaseOrder.required === 'Yes') {
@@ -420,6 +487,22 @@ export function runDocumentQa(data: OrderFormData): QaReport {
 
   // ---- Manually edited legal text ------------------------------------------
   addTermsChecks(add, data)
+
+  // ---- Review comments (optional, never blocking) ---------------------------
+  // Payment-terms / T&C comments are purely a review aid. They never warn or
+  // error; when present we surface one neutral, informational note.
+  const hasReviewComments =
+    !!(data.paymentTermsComments || '').trim() || !!(data.termsComments || '').trim()
+  if (hasReviewComments) {
+    add({
+      id: 'review.comments',
+      sectionId: 'terms',
+      status: 'pass',
+      severity: 'info',
+      message: 'Customer review comments added.',
+      suggestedFix: '',
+    })
+  }
 
   return summarize(checks)
 }

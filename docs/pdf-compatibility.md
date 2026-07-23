@@ -8,13 +8,26 @@ PDF**.
 
 Quill's Fillable PDF uses standard AcroForm fields:
 
-- `customer.signature`, `customer.name`, `customer.designation`, `customer.date`
+- `customer.signature`, `customer.name`, `customer.designation`, `customer.signDate`
+- `subscription.startDate` (text), `subscription.paymentMethod` (**dropdown**)
+- `paymentTerms.comments`, `terms.comments` — **multiline** review comment fields
 - `po.number`, `po.amount`
 - `po.required` — a single radio group (`Yes` / `No`), mutually exclusive by
   construction.
 
 SurveySparrow-side signature fields and all other content are flattened, so
 only the customer-facing fields remain editable.
+
+### Field appearance / font size
+
+Variable-text fields (text fields **and** dropdowns) must have their font size
+set **explicitly, after `addToPage`** — that call creates the field's `/DA`
+entry, which `setFontSize` edits. Without it, pdf-lib auto-sizes the value to
+fill the widget height, which renders the selected dropdown value (e.g. a
+payment method) or a signature comically large. Quill sets every fillable value
+to ≈9.5 pt (comment boxes ~9 pt) so they match the surrounding field text, then
+`form.updateFieldAppearances(DMSans)` regenerates the appearance streams at that
+size. The multiline comment fields call `enableMultiline()` before `addToPage`.
 
 ### Viewer behaviour
 

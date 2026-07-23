@@ -17,9 +17,9 @@ function base(): OrderFormData {
   d.customer.preparedBy = 'Sujith Balakrishnan'
   d.soldTo = { name: 'Jane Doe', email: 'jane.doe@acme.com' }
   d.services = [
-    { id: 'a', description: 'SurveySparrow NPS Software License – Enterprise', price: '1200', quantity: '12' },
-    { id: 'b', description: 'Text & Sentiment Analysis Add-on', price: '300', quantity: '12' },
-    { id: 'c', description: 'Premium Support Package', price: '1500', quantity: '1' },
+    { id: 'a', description: 'SurveySparrow NPS Software License – Enterprise', price: '1200', quantity: '25', unit: 'seats' },
+    { id: 'b', description: 'Text & Sentiment Analysis Add-on', price: '300', quantity: '12', unit: 'mo' },
+    { id: 'c', description: 'Premium Support Package', price: '1500', quantity: '1', unit: '' },
   ]
   d.billing.billTo = {
     name: 'Accounts Payable',
@@ -27,6 +27,7 @@ function base(): OrderFormData {
   }
   d.billing.sameAsBillTo = true
   d.subscription.startDate = '2026-08-01'
+  d.subscription.paymentMethod = 'ACH / Bank Transfer' // optional field; set for clean fixtures
   d.signature.customer.name = 'Jane Doe'
   d.signature.customer.designation = 'Head of Revenue Operations'
   d.signature.customer.signatureName = 'Jane Doe'
@@ -127,6 +128,40 @@ export const FIXTURES: Fixture[] = [
     })(),
   },
   {
+    name: 'due-on-receipt',
+    description:
+      'Payment due on receipt — callout and payment clause read "upon receipt of the invoice".',
+    data: (() => {
+      const d = base()
+      d.subscription.paymentTermMode = 'due-on-receipt'
+      return d
+    })(),
+  },
+  {
+    name: 'custom-term',
+    description:
+      'Custom payment-term wording flows into both the callout and the payment clause.',
+    data: (() => {
+      const d = base()
+      d.subscription.paymentTermMode = 'custom'
+      d.subscription.paymentTermCustom = 'in three equal monthly installments'
+      return d
+    })(),
+  },
+  {
+    name: 'review-comments',
+    description:
+      'Customer review comments on payment terms AND Terms & Conditions — render in Final PDF / preview, editable fields in Fillable.',
+    data: (() => {
+      const d = base()
+      d.paymentTermsComments =
+        'Customer requests Net 60 instead of Net 30; pending finance approval before signature.'
+      d.termsComments =
+        'Customer legal wants to negotiate the auto-renewal notice period in clause 4.'
+      return d
+    })(),
+  },
+  {
     name: 'modified-terms',
     description:
       'Manually overridden legal clause — surfaces the terms.modified warning; the edited text renders in exports (no "modified" marker in customer output).',
@@ -159,6 +194,32 @@ export const FIXTURES: Fixture[] = [
   },
   { name: 'typed-signature', description: 'Typed signature only.', data: base() },
   {
+    name: 'review-stage',
+    description:
+      'Sent for review before signature: blank start date + payment method — warnings only, never blocking.',
+    data: (() => {
+      const d = base()
+      d.subscription.startDate = ''
+      d.subscription.paymentMethod = ''
+      return d
+    })(),
+  },
+  {
+    name: 'service-units',
+    description: 'Line items with display-only units (GB, EMAILS, users, hrs, EA).',
+    data: (() => {
+      const d = base()
+      d.services = [
+        { id: 'u1', description: 'Cloud Storage', price: '2', quantity: '50', unit: 'GB' },
+        { id: 'u2', description: 'Transactional Email Credits', price: '0.01', quantity: '1000', unit: 'EMAILS' },
+        { id: 'u3', description: 'Platform Users', price: '15', quantity: '100', unit: 'users' },
+        { id: 'u4', description: 'Support Hours', price: '120', quantity: '10', unit: 'hrs' },
+        { id: 'u5', description: 'Implementation Package', price: '2500', quantity: '1', unit: 'EA' },
+      ]
+      return d
+    })(),
+  },
+  {
     name: 'many-lines',
     description: 'Many service lines — pushes PO onto the Acceptance page.',
     data: (() => {
@@ -168,6 +229,7 @@ export const FIXTURES: Fixture[] = [
         description: `SurveySparrow module line item number ${i + 1}`,
         price: '500',
         quantity: '3',
+        unit: '',
       }))
       d.purchaseOrder = { required: 'Yes', number: 'PO-2026-00999', amount: '18000' }
       return d

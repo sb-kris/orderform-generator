@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Lock, LockOpen, Pencil, RotateCcw } from 'lucide-react'
-import { Section } from './Section'
+import { Field, Section } from './Section'
 import {
   Accordion,
   AccordionContent,
@@ -21,32 +21,30 @@ import {
 import { useStore } from '@/state/store'
 
 /**
- * Unlock passphrase for editing the locked legal text.
+ * The exact word a user must type to unlock the locked legal text for editing.
  *
- * ⚠️ THIS IS A FRICTION GUARDRAIL, NOT SECURITY. Quill is a browser-only app,
- * so this string ships in the client bundle and is trivially discoverable. Its
- * only purpose is to stop *casual* edits to reviewed legal text — someone has
- * to mean it. Do not treat it as an access control. Edit freely if the team
- * wants a different word.
+ * ⚠️ THIS IS AN ACCIDENTAL-CHANGE GUARDRAIL, NOT SECURITY. It is a deliberate
+ * friction step so standard legal language can't be edited by a stray click —
+ * nothing is stored, nothing is verified against a secret. Editing still works
+ * exactly as before once confirmed.
  */
-const UNLOCK_PASSPHRASE = 'ss-legal'
+const CONFIRM_WORD = 'CHANGE'
 
 export function TermsSection() {
   const { data, update } = useStore()
-  const netDays = data.subscription.paymentTermDays ?? 30
   const overrides = data.termOverrides ?? {}
 
-  // Rendered clauses (net-term interpolated + any overrides applied).
-  const terms = buildTerms(netDays, overrides)
+  // Rendered clauses (payment-term interpolated + any overrides applied).
+  const terms = buildTerms(data.subscription, overrides)
   // Canonical (standard) clauses — the editor seeds from these when a clause has
   // no override yet, so edits start from the approved text, not stale state.
-  const canonical = buildTerms(netDays, {})
+  const canonical = buildTerms(data.subscription, {})
 
   // Ephemeral unlock — LOCAL state only, never persisted; reload always re-locks.
   const [unlocked, setUnlocked] = useState(false)
-  const [pwOpen, setPwOpen] = useState(false)
-  const [pw, setPw] = useState('')
-  const [pwError, setPwError] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+  const [confirmError, setConfirmError] = useState(false)
 
   const hasOverrides = Object.keys(overrides).length > 0
 
@@ -66,13 +64,14 @@ export function TermsSection() {
   const resetAll = () => update((p) => ({ ...p, termOverrides: {} }))
 
   const attemptUnlock = () => {
-    if (pw === UNLOCK_PASSPHRASE) {
+    // Case-sensitive: only the exact word unlocks.
+    if (confirmText === CONFIRM_WORD) {
       setUnlocked(true)
-      setPwOpen(false)
-      setPw('')
-      setPwError(false)
+      setConfirmOpen(false)
+      setConfirmText('')
+      setConfirmError(false)
     } else {
-      setPwError(true)
+      setConfirmError(true)
     }
   }
 
@@ -91,16 +90,16 @@ export function TermsSection() {
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => setUnlocked(false)}>
-              <Lock className="h-3.5 w-3.5" /> Re-lock
+              <Lock className="h-3.5 w-3.5" /> Lock terms
             </Button>
           </div>
         ) : (
           <button
             type="button"
             onClick={() => {
-              setPw('')
-              setPwError(false)
-              setPwOpen(true)
+              setConfirmText('')
+              setConfirmError(false)
+              setConfirmOpen(true)
             }}
             title="Unlock to edit the legal text"
           >
@@ -186,47 +185,68 @@ export function TermsSection() {
         </Accordion>
       </div>
 
-      {/* Unlock passphrase dialog — friction guardrail, not security. */}
+      <Field
+        label="Customer Comments on Terms & Conditions"
+        htmlFor="terms.comments"
+        hint="Use this only when the customer or internal reviewer requests changes to the Terms & Conditions. It appears in the document only when filled, and stays editable in the Fillable PDF."
+      >
+        <Textarea
+          id="terms.comments"
+          value={data.termsComments}
+          onChange={(e) => update((p) => ({ ...p, termsComments: e.target.value }))}
+          placeholder="Optional — note any clauses the customer wants to review or change."
+          maxLength={800}
+          className="min-h-[64px]"
+        />
+      </Field>
+      <p className="text-[11px] text-slate-500">
+        Use comments for customer review feedback. Accepted changes should be reviewed
+        internally before generating the Final PDF.
+      </p>
+
+      {/* Confirmation step — an accidental-change guardrail, not security. */}
       <Dialog
-        open={pwOpen}
+        open={confirmOpen}
         onOpenChange={(o) => {
-          setPwOpen(o)
+          setConfirmOpen(o)
           if (!o) {
-            setPw('')
-            setPwError(false)
+            setConfirmText('')
+            setConfirmError(false)
           }
         }}
       >
         <DialogContent>
           <div className="p-6">
-            <DialogTitle className="pr-6">Unlock legal text for editing?</DialogTitle>
+            <DialogTitle className="pr-6">Unlock Terms &amp; Conditions editing?</DialogTitle>
             <DialogDescription className="mt-2 text-[13px] leading-relaxed text-slate-600">
-              Editing applies to <strong>this document only</strong> and never changes the
-              standard template. Enter the passphrase to continue.
+              Type <strong>CHANGE</strong> to unlock Terms &amp; Conditions editing. Edits apply to{' '}
+              <strong>this document only</strong> and never change the standard template.
             </DialogDescription>
             <div className="mt-4">
               <Input
-                type="password"
-                value={pw}
+                value={confirmText}
                 autoFocus
-                placeholder="Passphrase"
-                invalid={pwError}
+                placeholder="CHANGE"
+                invalid={confirmError}
                 onChange={(e) => {
-                  setPw(e.target.value)
-                  setPwError(false)
+                  setConfirmText(e.target.value)
+                  setConfirmError(false)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') attemptUnlock()
                 }}
               />
-              {pwError && (
+              <p className="mt-1.5 text-[11.5px] text-slate-500">
+                This prevents accidental edits to standard legal language.
+              </p>
+              {confirmError && (
                 <p className="mt-1.5 text-[11.5px] font-medium text-destructive">
-                  That passphrase isn’t correct. The legal text stays locked.
+                  Type CHANGE exactly to unlock.
                 </p>
               )}
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setPwOpen(false)}>
+              <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>
                 Cancel
               </Button>
               <Button size="sm" onClick={attemptUnlock}>

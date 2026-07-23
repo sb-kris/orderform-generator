@@ -5,16 +5,18 @@
  * never drift between outputs.
  */
 import type { OrderFormData } from '@/state/types'
-import { formatCurrency, formatDate, parseNumber } from './format'
+import { formatCurrency, formatDate, formatQuantityWithUnit, parseNumber } from './format'
 import { CURRENCIES, type CurrencyCode } from './currency'
-import { payableNote } from './terms'
+import { payableNote, type PaymentTermMode } from './terms'
 
 export type ServiceRow = {
   description: string
   price: number
   quantity: number
   subtotal: number
+  unit: string
   priceLabel: string
+  /** Quantity with the optional unit appended, e.g. "50 GB" (display only). */
   quantityLabel: string
   subtotalLabel: string
 }
@@ -40,10 +42,16 @@ export type DocModel = {
     termMonths: string
     startDate: string
     paymentMethod: string
+    paymentTermMode: PaymentTermMode
     paymentTermDays: number
+    paymentTermCustom: string
   }
-  /** One-line payment callout, single-sourced from the net term. */
+  /** One-line payment callout, single-sourced from the payment term. */
   payableNote: string
+  /** Optional payment-terms comments, trimmed. Empty string when none. */
+  paymentTermsComments: string
+  /** Optional Terms & Conditions comments, trimmed. Empty string when none. */
+  termsComments: string
   po: {
     required: 'Yes' | 'No'
     numberLabel: string
@@ -54,8 +62,7 @@ export type DocModel = {
 
 export function buildDocModel(data: OrderFormData): DocModel {
   const currency = data.currency
-  // Guard old drafts that predate the field.
-  const netDays = data.subscription.paymentTermDays ?? 30
+  const sub = data.subscription
   const populated = data.services.filter(
     (s) => s.description.trim() || parseNumber(s.price) || parseNumber(s.quantity),
   )
@@ -63,13 +70,16 @@ export function buildDocModel(data: OrderFormData): DocModel {
     const price = parseNumber(line.price)
     const quantity = parseNumber(line.quantity)
     const subtotal = price * quantity
+    const unit = (line.unit ?? '').trim()
     return {
       description: line.description,
       price,
       quantity,
       subtotal,
+      unit,
       priceLabel: price ? formatCurrency(price, currency) : '',
-      quantityLabel: quantity ? String(quantity) : '',
+      // Unit is display-only and never enters subtotal/total maths.
+      quantityLabel: quantity ? formatQuantityWithUnit(quantity, unit) : '',
       subtotalLabel: price && quantity ? formatCurrency(subtotal, currency) : '',
     }
   })
@@ -94,13 +104,17 @@ export function buildDocModel(data: OrderFormData): DocModel {
     billTo: data.billing.billTo,
     shipTo,
     subscription: {
-      billingPeriod: data.subscription.billingPeriod,
-      termMonths: data.subscription.termMonths,
-      startDate: formatDate(data.subscription.startDate),
-      paymentMethod: data.subscription.paymentMethod,
-      paymentTermDays: netDays,
+      billingPeriod: sub.billingPeriod,
+      termMonths: sub.termMonths,
+      startDate: formatDate(sub.startDate),
+      paymentMethod: sub.paymentMethod,
+      paymentTermMode: sub.paymentTermMode ?? 'net',
+      paymentTermDays: sub.paymentTermDays ?? 30,
+      paymentTermCustom: (sub.paymentTermCustom ?? '').trim(),
     },
-    payableNote: payableNote(netDays),
+    payableNote: payableNote(sub),
+    paymentTermsComments: (data.paymentTermsComments ?? '').trim(),
+    termsComments: (data.termsComments ?? '').trim(),
     po: {
       required: data.purchaseOrder.required,
       numberLabel:

@@ -10,6 +10,21 @@ export function formatCurrency(
   return f.format(n)
 }
 
+/**
+ * Quantity with an optional display-only unit appended: "50 GB", "1000 EMAILS",
+ * or just "10" when no unit. Unit is trimmed; casing preserved; no double
+ * spaces. Blank quantity yields an empty string. Never used in calculations.
+ */
+export function formatQuantityWithUnit(
+  quantity: number | string,
+  unit?: string | null,
+): string {
+  const q = (typeof quantity === 'number' ? String(quantity) : String(quantity ?? '')).trim()
+  if (!q) return ''
+  const u = (unit ?? '').trim()
+  return u ? `${q} ${u}` : q
+}
+
 export function parseNumber(v: string): number {
   if (!v) return 0
   const n = Number(v.replace(/,/g, ''))

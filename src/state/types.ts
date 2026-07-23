@@ -1,10 +1,17 @@
 import type { CurrencyCode } from '@/lib/currency'
+import type { PaymentTermMode } from '@/lib/terms'
 
 export type ServiceLine = {
   id: string
   description: string
   price: string
   quantity: string
+  /**
+   * Optional, display-only unit/suffix appended to the quantity in the preview
+   * and exports (e.g. "GB", "mo", "EMAILS"). Max 6 chars, casing preserved,
+   * never affects calculations. Empty string when unused.
+   */
+  unit: string
 }
 
 export type BillingPeriod = 'Monthly' | 'Quarterly' | 'Annual' | 'Biennial' | 'Triennial'
@@ -14,6 +21,15 @@ export type PaymentMethod =
   | 'Wire Transfer'
   | 'Credit Card'
   | 'Check'
+
+/** Canonical payment-method options, shared by the app select and the fillable
+ *  PDF dropdown so they can never drift. */
+export const PAYMENT_METHODS: PaymentMethod[] = [
+  'ACH / Bank Transfer',
+  'Wire Transfer',
+  'Credit Card',
+  'Check',
+]
 
 /** In-memory image payload. base64 kept in localStorage for small assets. */
 export type ImageAsset = {
@@ -79,11 +95,30 @@ export type OrderFormData = {
     billingPeriod: BillingPeriod
     termMonths: string
     startDate: string
-    paymentMethod: PaymentMethod
-    /** Net payment term in days (15 | 30 | 45 | 60). Drives the payment callout
-     *  AND Payment Terms clause 3 from one value so they can never disagree. */
+    /** Optional — may be left blank ("") when the form is sent for review. */
+    paymentMethod: PaymentMethod | ''
+    /** How the payment term is expressed. Defaults to 'net' (back-compat: old
+     *  drafts predate this field and resolve to 'net'). */
+    paymentTermMode: PaymentTermMode
+    /** Net payment term in days (15 | 30 | 45 | 60). Used when mode === 'net'.
+     *  Drives the payment callout AND the Subscription Fees & Payment clause
+     *  from one value so they can never disagree. */
     paymentTermDays: number
+    /** Free-text wording used when mode === 'custom'. Empty otherwise. */
+    paymentTermCustom: string
   }
+  /**
+   * Optional customer/reviewer comments on the payment terms. Never blocks
+   * export; renders in customer output only when non-empty and is an editable
+   * multiline field in the Fillable PDF (AcroForm field `paymentTerms.comments`).
+   */
+  paymentTermsComments: string
+  /**
+   * Optional customer/reviewer comments on the Terms & Conditions. Same policy
+   * as `paymentTermsComments` — never blocks export, renders only when non-empty,
+   * editable multiline field in the Fillable PDF (AcroForm field `terms.comments`).
+   */
+  termsComments: string
   signature: {
     customer: Signature
     surveysparrow: Signature
@@ -100,6 +135,7 @@ export const emptyLine = (): ServiceLine => ({
   description: '',
   price: '',
   quantity: '',
+  unit: '',
 })
 
 export function newDocumentId(): string {
@@ -152,9 +188,13 @@ export const defaultData = (): OrderFormData => ({
     billingPeriod: 'Annual',
     termMonths: '12',
     startDate: '',
-    paymentMethod: 'ACH / Bank Transfer',
+    paymentMethod: '', // optional; blank until Sales confirms it
+    paymentTermMode: 'net',
     paymentTermDays: 30,
+    paymentTermCustom: '',
   },
+  paymentTermsComments: '',
+  termsComments: '',
   signature: {
     customer: blankSignature(),
     surveysparrow: blankSignature('Trent Ward', 'Director of Sales'),

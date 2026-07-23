@@ -71,14 +71,15 @@ export function ServicesTable() {
         <CurrencySelector value={currency} onChange={setCurrency} />
       </div>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-[10px] uppercase tracking-[0.12em] text-slate-500">
-              <th className="px-3 py-2 font-semibold w-[46%]">Line Item</th>
-              <th className="px-3 py-2 font-semibold w-[18%] text-right">Price</th>
-              <th className="px-2 py-2 font-semibold w-[10%] text-center">Qty</th>
-              <th className="px-3 py-2 font-semibold w-[16%] text-right">Subtotal</th>
-              <th className="px-2 py-2 font-semibold w-[10%] text-right">
+              <th className="px-3 py-2 font-semibold w-[40%]">Line Item</th>
+              <th className="px-3 py-2 font-semibold w-[16%] text-right">Price</th>
+              <th className="px-2 py-2 font-semibold w-[9%] text-center">Qty</th>
+              <th className="px-2 py-2 font-semibold w-[13%] text-center">Unit</th>
+              <th className="px-3 py-2 font-semibold w-[14%] text-right">Subtotal</th>
+              <th className="px-2 py-2 font-semibold w-[8%] text-right">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
@@ -130,6 +131,16 @@ export function ServicesTable() {
                         aria-label={`Line ${i + 1} quantity`}
                       />
                     </td>
+                    <td className="px-2 py-1.5">
+                      <Input
+                        value={line.unit}
+                        onChange={(e) => setLine(line.id, { unit: e.target.value })}
+                        maxLength={6}
+                        placeholder="GB"
+                        className="h-8 text-center"
+                        aria-label={`Unit for service line item ${i + 1}`}
+                      />
+                    </td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[13px] font-medium text-slate-900">
                       {formatCurrency(subtotal, currency)}
                     </td>
@@ -163,7 +174,7 @@ export function ServicesTable() {
           <tfoot>
             <tr className="border-t-2 border-teal-400 bg-teal-50">
               <td
-                colSpan={3}
+                colSpan={4}
                 className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-teal-800"
               >
                 Total
