@@ -90,14 +90,15 @@ export async function renderOrderForm(
   )
 
   drawTitleBlock(layout)
-  renderCustomer(layout, model)
-  renderSoldTo(layout, model)
+  renderCustomer(layout, model, mode)
+  renderSoldTo(layout, model, mode)
   renderServices(layout, model)
-  renderBillingShipping(layout, model)
+  renderBillingShipping(layout, model, mode)
   renderSubscription(layout, model, mode)
   renderTerms(layout, buildTerms(data.subscription, data.termOverrides ?? {}))
   renderCommentsBlock(layout, mode, {
-    label: 'CUSTOMER COMMENTS ON TERMS & CONDITIONS, IF ANY',
+    fillableLabel: 'CUSTOMER COMMENTS ON TERMS & CONDITIONS, IF ANY',
+    staticLabel: 'Terms & Conditions Comments',
     fieldName: 'terms.comments',
     tooltip: 'Customer comments on Terms & Conditions, if any.',
     comments: model.termsComments,
@@ -264,22 +265,57 @@ function drawTitleBlock(l: Layout) {
 
 // -------- Sections -----------------------------------------------------------
 
-function renderCustomer(l: Layout, m: DocModel) {
+function renderCustomer(l: Layout, m: DocModel, mode: Mode) {
+  const fillable = mode === 'fillable'
   drawSectionHeading(l, '01', 'Customer Information')
-  drawLabeledFields(l, [
-    { label: "Customer's Legal Name", value: m.customer.legalName, required: true, span: 2 },
-    { label: 'Order Form Date', value: m.customer.orderFormDate, required: true },
-    { label: 'Pricing Valid Through', value: m.customer.pricingValidThrough, required: true },
-    { label: 'Prepared By', value: m.customer.preparedBy, required: true, span: 2 },
-  ])
+  drawLabeledFields(
+    l,
+    [
+      {
+        label: "Customer's Legal Name",
+        value: m.customer.legalName,
+        required: true,
+        span: 2,
+        // Customer-editable in the Fillable PDF so they can correct it.
+        field: fillable
+          ? { name: 'customer.legalName', kind: 'text', tooltip: 'Customer legal name' }
+          : undefined,
+      },
+      // Order Form Date / Pricing Valid Through / Prepared By are Sales-set —
+      // they stay static even in the Fillable PDF.
+      { label: 'Order Form Date', value: m.customer.orderFormDate, required: true },
+      { label: 'Pricing Valid Through', value: m.customer.pricingValidThrough, required: true },
+      { label: 'Prepared By', value: m.customer.preparedBy, required: true, span: 2 },
+    ],
+    2,
+    fillable,
+  )
 }
 
-function renderSoldTo(l: Layout, m: DocModel) {
+function renderSoldTo(l: Layout, m: DocModel, mode: Mode) {
+  const fillable = mode === 'fillable'
   drawSectionHeading(l, '02', 'Sold To')
-  drawLabeledFields(l, [
-    { label: 'Name', value: m.soldTo.name, required: true },
-    { label: 'Email', value: m.soldTo.email, required: true },
-  ])
+  drawLabeledFields(
+    l,
+    [
+      {
+        label: 'Name',
+        value: m.soldTo.name,
+        required: true,
+        field: fillable ? { name: 'soldTo.name', kind: 'text', tooltip: 'Sold To name' } : undefined,
+      },
+      {
+        label: 'Email',
+        value: m.soldTo.email,
+        required: true,
+        field: fillable
+          ? { name: 'soldTo.email', kind: 'text', tooltip: 'Sold To email address' }
+          : undefined,
+      },
+    ],
+    2,
+    fillable,
+  )
 }
 
 function renderServices(l: Layout, m: DocModel) {
@@ -415,7 +451,8 @@ function renderServices(l: Layout, m: DocModel) {
 
 const ADDRESS_MAX_LINES = 6
 
-function renderBillingShipping(l: Layout, m: DocModel) {
+function renderBillingShipping(l: Layout, m: DocModel, mode: Mode) {
+  const fillable = mode === 'fillable'
   const cardW = (CONTENT_W - 16) / 2
 
   // Wrap both addresses up-front so the cards can grow with their content
@@ -455,6 +492,12 @@ function renderBillingShipping(l: Layout, m: DocModel) {
     label: 'BILL TO',
     name: m.billTo.name,
     addressLines: billLines,
+    fillable,
+    nameField: 'billing.name',
+    addressField: 'billing.address',
+    rawAddress: m.billTo.address,
+    nameTooltip: 'Bill To name',
+    addressTooltip: 'Bill To address',
   })
   drawAddressCard(l, {
     x: PAGE.marginX + cardW + 16,
@@ -465,6 +508,12 @@ function renderBillingShipping(l: Layout, m: DocModel) {
     label: 'SHIP TO',
     name: m.shipTo.name,
     addressLines: shipLines,
+    fillable,
+    nameField: 'shipping.name',
+    addressField: 'shipping.address',
+    rawAddress: m.shipTo.address,
+    nameTooltip: 'Ship To name',
+    addressTooltip: 'Ship To address',
   })
   l.y = startY - cardH - 8
 }
@@ -480,9 +529,31 @@ function drawAddressCard(
     label: string
     name: string
     addressLines: string[]
+    /** When true, the name + address pills hold editable AcroForm fields. */
+    fillable?: boolean
+    nameField?: string
+    addressField?: string
+    rawAddress?: string
+    nameTooltip?: string
+    addressTooltip?: string
   },
 ) {
-  const { x, y, width, height, addrPillH, label, name, addressLines } = opts
+  const {
+    x,
+    y,
+    width,
+    height,
+    addrPillH,
+    label,
+    name,
+    addressLines,
+    fillable,
+    nameField,
+    addressField,
+    rawAddress,
+    nameTooltip,
+    addressTooltip,
+  } = opts
   drawRoundedRect(l.page, {
     x,
     y: y - height,
@@ -518,14 +589,23 @@ function drawAddressCard(
     borderColor: name ? COLORS.slate200 : COLORS.tealSoft,
     borderWidth: 0.6,
   })
-  const nameText = name || `{{${label.replace(/[^\w]+/g, '_')}_Name}}`
-  l.page.drawText(truncate(sanitizeText(nameText), l.fonts.medium, 9, width - 44), {
-    x: x + 22,
-    y: namePillY + 5,
-    size: 9,
-    font: name ? l.fonts.medium : l.fonts.regular,
-    color: name ? COLORS.slate950 : COLORS.teal,
-  })
+  if (fillable && nameField) {
+    const form = l.doc.getForm()
+    const tf = form.createTextField(nameField)
+    if (name) tf.setText(sanitizeText(name))
+    tf.addToPage(l.page, { x: x + 18, y: namePillY + 2, width: width - 36, height: 14, borderWidth: 0 })
+    tf.setFontSize(9) // after addToPage — match the static name text size
+    setFieldTooltip(tf, nameTooltip ?? '')
+  } else {
+    const nameText = name || `{{${label.replace(/[^\w]+/g, '_')}_Name}}`
+    l.page.drawText(truncate(sanitizeText(nameText), l.fonts.medium, 9, width - 44), {
+      x: x + 22,
+      y: namePillY + 5,
+      size: 9,
+      font: name ? l.fonts.medium : l.fonts.regular,
+      color: name ? COLORS.slate950 : COLORS.teal,
+    })
+  }
   l.page.drawText('ADDRESS  *', {
     x: x + 14,
     y: y - 70,
@@ -544,7 +624,21 @@ function drawAddressCard(
     borderColor: addressLines.length ? COLORS.slate200 : COLORS.tealSoft,
     borderWidth: 0.6,
   })
-  if (addressLines.length === 0) {
+  if (fillable && addressField) {
+    const form = l.doc.getForm()
+    const tf = form.createTextField(addressField)
+    tf.enableMultiline()
+    if (rawAddress) tf.setText(sanitizeText(rawAddress))
+    tf.addToPage(l.page, {
+      x: x + 18,
+      y: addrPillY + 2,
+      width: width - 36,
+      height: addrPillH - 4,
+      borderWidth: 0,
+    })
+    tf.setFontSize(8.5) // after addToPage — match the static address text size
+    setFieldTooltip(tf, addressTooltip ?? '')
+  } else if (addressLines.length === 0) {
     l.page.drawText(`{{${label.replace(/[^\w]+/g, '_')}_Address}}`, {
       x: x + 22,
       y: addrPillY + addrPillH - 12,
@@ -626,10 +720,11 @@ function renderSubscription(l: Layout, m: DocModel, mode: Mode) {
   l.y = cy - calloutH - 6
 
   renderCommentsBlock(l, mode, {
-    label: 'CUSTOMER COMMENTS ON PAYMENT TERMS, IF ANY',
-    fieldName: 'paymentTerms.comments',
-    tooltip: 'Customer comments on Payment Terms, if any.',
-    comments: m.paymentTermsComments,
+    fillableLabel: 'CUSTOMER COMMENTS ON SUBSCRIPTION DETAILS, IF ANY',
+    staticLabel: 'Subscription Details Comments',
+    fieldName: 'subscription.comments',
+    tooltip: 'Customer comments on Subscription Details, if any.',
+    comments: m.subscriptionComments,
   })
 }
 
@@ -645,23 +740,33 @@ function renderSubscription(l: Layout, m: DocModel, mode: Mode) {
  * - Final / Draft: rendered as static plain text ONLY when comments exist, so a
  *   customer-facing document never shows an empty review box.
  */
+const COMMENT_HELPER = 'After adding comments, please save or download this PDF before sending it back.'
+
 function renderCommentsBlock(
   l: Layout,
   mode: Mode,
-  opts: { label: string; fieldName: string; tooltip: string; comments: string },
+  opts: {
+    /** Uppercase label shown above the editable field in the Fillable PDF. */
+    fillableLabel: string
+    /** Title-case heading shown above static comments in Final/Draft. */
+    staticLabel: string
+    fieldName: string
+    tooltip: string
+    comments: string
+  },
 ) {
   const fillable = mode === 'fillable'
-  const { label, fieldName, tooltip, comments } = opts
+  const { fillableLabel, staticLabel, fieldName, tooltip, comments } = opts
   if (!fillable && !comments) return
 
   if (fillable) {
     const boxH = 46
-    // Keep label + box together; only break to a new page when it genuinely
-    // doesn't fit below the current content (tight cushion, not the generous
-    // section-level one), so the box sits under the last clause whenever it can.
-    const needed = 14 + boxH + 8
+    // Keep label + box + helper together; only break to a new page when it
+    // genuinely doesn't fit (tight cushion, not the generous section-level one),
+    // so the box sits under the section whenever it can.
+    const needed = 14 + boxH + 10 + 8
     if (l.y - needed < PAGE.marginBottom + 4) newPage(l)
-    l.page.drawText(label, {
+    l.page.drawText(fillableLabel, {
       x: PAGE.marginX,
       y: l.y - 9,
       size: 6.5,
@@ -692,17 +797,25 @@ function renderCommentsBlock(
     })
     tf.setFontSize(9) // after addToPage — the /DA exists by then
     setFieldTooltip(tf, tooltip)
-    l.y = boxTop - boxH - 8
+    // Subtle save/download reminder (fillable/review only — never on Final).
+    l.page.drawText(COMMENT_HELPER, {
+      x: PAGE.marginX,
+      y: boxTop - boxH - 8,
+      size: 6.5,
+      font: l.fonts.oblique,
+      color: COLORS.slate400,
+    })
+    l.y = boxTop - boxH - 16
     return
   }
 
   // Static (Final / Draft) — comments guaranteed non-empty here.
   const bodyLines = wrapText(comments, l.fonts.regular, 8.75, CONTENT_W - 4)
-  // Keep the label + all comment lines together; break only if they don't fit
-  // below the last clause (tight cushion), never split label from body.
+  // Keep the heading + all comment lines together; break only if they don't fit
+  // below the section (tight cushion), never split the heading from the body.
   const needed = 14 + bodyLines.length * 12 + 6
   if (l.y - needed < PAGE.marginBottom + 4) newPage(l)
-  l.page.drawText(label, {
+  l.page.drawText(staticLabel, {
     x: PAGE.marginX,
     y: l.y - 9,
     size: 6.5,
@@ -1320,6 +1433,7 @@ function drawPurchaseOrderFields(
       height: valueH - 4,
       borderWidth: 0,
     })
+    num.setFontSize(10) // after addToPage — match the static PO value size, not auto-sized
     setFieldTooltip(num, 'Purchase order number')
 
     drawRoundedRect(page, {
@@ -1341,6 +1455,7 @@ function drawPurchaseOrderFields(
       height: valueH - 4,
       borderWidth: 0,
     })
+    amt.setFontSize(10) // after addToPage — match the static PO value size, not auto-sized
     setFieldTooltip(amt, 'Purchase order amount')
   } else {
     const values = [m.po.required, m.po.numberLabel, m.po.amountLabel]

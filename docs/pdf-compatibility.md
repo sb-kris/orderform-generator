@@ -8,12 +8,22 @@ PDF**.
 
 Quill's Fillable PDF uses standard AcroForm fields:
 
-- `customer.signature`, `customer.name`, `customer.designation`, `customer.signDate`
+- `customer.legalName` — customer-editable legal name
+- `soldTo.name`, `soldTo.email`
+- `billing.name`, `billing.address` (multiline), `shipping.name`,
+  `shipping.address` (multiline)
 - `subscription.startDate` (text), `subscription.paymentMethod` (**dropdown**)
-- `paymentTerms.comments`, `terms.comments` — **multiline** review comment fields
+- `subscription.comments`, `terms.comments` — **multiline** review comment fields
+  (legacy `paymentTerms.comments` is still read on import)
+- `customer.signature`, `customer.name`, `customer.designation`, `customer.signDate`
 - `po.number`, `po.amount`
 - `po.required` — a single radio group (`Yes` / `No`), mutually exclusive by
   construction.
+
+All value fields render at ~9.5 pt (addresses ~8.5 pt, PO fields 10 pt) to match
+the surrounding static text; only the signature line is intentionally larger
+(name-length-aware). Comment fields carry a subtle "save/download this PDF before
+sending it back" reminder in the Fillable PDF only.
 
 SurveySparrow-side signature fields and all other content are flattened, so
 only the customer-facing fields remain editable.
@@ -61,6 +71,26 @@ watermark on every page. For internal review only.
 - Fillable field values are sanitised the same way — an out-of-range glyph in a
   field value would otherwise abort the whole export when Acrobat builds the
   appearance stream.
+
+## Reading a returned Fillable PDF back in (Import Response)
+
+Quill can read a customer-returned Fillable PDF back in (`Import Response` →
+`src/lib/exports/pdfReadback.ts`) using pdf-lib's `getForm()` to pull AcroForm
+values, mapped to app fields via a mapping layer (with legacy aliases `po.*`,
+`customer.date`). Notes:
+
+- Only **AcroForm field values** are read — text fields, the payment-method
+  dropdown, and the PO radio group. This is why the fields must keep stable
+  semantic names across releases.
+- **Signature images are not extracted.** The customer signature is a *text*
+  field (typed name); a hand-drawn/stamped signature appearance is not an
+  AcroForm value and can't be imported — the review drawer says as much.
+- Values are shown for review (**current vs returned**) and applied only on an
+  explicit Apply; a non-empty existing value is never silently overwritten.
+- Filling a PDF outside Quill does **not** sync back automatically. To put
+  accepted changes into the **Final PDF**, apply them in Quill and regenerate.
+- Robustness: an encrypted PDF is opened with `ignoreEncryption: true`; a
+  non-PDF or a PDF with no recognised fields fails gracefully with a message.
 
 ## E-signature tools — important
 

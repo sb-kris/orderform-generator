@@ -24,7 +24,7 @@ below maps to a fixture you can generate and eyeball.
 | `net-45` | Net payment term | Callout says **45 days**; the Subscription Fees & Payment clause says **forty-five (45) days** |
 | `due-on-receipt` | Due-on-receipt term | Callout says **Payable upon receipt of invoice.**; clause says **payable upon receipt of the invoice** |
 | `custom-term` | Custom payment wording | Callout + clause read the custom wording after "payable" (`Payable in three equal monthly installments.`); QA is clean (custom wording set) |
-| `review-comments` | Payment-terms + T&C comments | Score **100**; a neutral **"Customer review comments added."** pass note; both comment blocks render in preview / Final PDF, editable fields in Fillable |
+| `review-comments` | Subscription + T&C comments | Score **100**; a neutral **"Customer review comments added."** pass note; both comment blocks render in preview / Final PDF, editable fields in Fillable |
 | `logo-mismatch` | Logo-vs-name heuristic | **Warning**: filename doesn't match the customer name |
 | `po-required` | PO block populated | No issues; PO number + amount render |
 | `po-required-missing` | PO gating | **2 errors** (number + amount); Final PDF blocked |
@@ -44,6 +44,53 @@ below maps to a fixture you can generate and eyeball.
 - **Final PDF** — **blocked** while any error exists; always shows the
   confirmation summary first; flattened (no editable fields remain).
 - **Editable DOCX** — exports with warnings; fully editable in Word/Google Docs.
+
+## Save / Export / Import (draft + customer-review workflow)
+
+The toolbar's data actions are labelled for where the data goes:
+
+- **Save Locally** — writes the draft to **browser localStorage** (this browser
+  only). Toast: "Draft saved to this browser."
+- **Load Local Draft** — restores the localStorage draft.
+- **Export Draft** — downloads a **portable `.quill.json`** file
+  (`SurveySparrow-{Customer}-Order-Form-Draft.quill.json`): `schemaVersion`,
+  `exportedAt`, `templateVersion`, `docId`, `orderFormData`, `reviewedWarnings`.
+  No secrets, no generated PDF/DOCX bytes. Move it between browsers/devices.
+- **Import Response** — opens a chooser for either a `.quill.json` draft file or
+  a **customer-returned Fillable PDF**.
+- **Reset** — confirms, then clears the form + the saved draft.
+
+**Draft import** validates shape + `schemaVersion` (a newer schema is refused
+with a message), migrates missing fields, and never crashes on malformed input
+("This does not look like a Quill draft file."). A bare `OrderFormData` blob is
+also accepted. Imported drafts land **unsaved** — Save Locally to keep them.
+
+**Filled-PDF readback** (`src/lib/exports/pdfReadback.ts`) reads AcroForm values
+via pdf-lib through a field-mapping layer (canonical id → pdf names, with legacy
+aliases `po.*`, `customer.date`, `paymentTerms.comments`). Recognised fields:
+`customer.legalName`, `soldTo.name/email`, `billing.name/address`,
+`shipping.name/address`, `subscription.startDate`, `subscription.paymentMethod`,
+`subscription.comments`, `terms.comments`,
+`customer.signature/name/designation/signDate`, `po.required/number/amount`. A
+PDF with none of these → "No recognizable order-form fields were found in this
+PDF." A non-PDF/corrupt file fails gracefully. Dates are parsed loosely
+(ISO / "Aug 01, 2026" / dd/mm/yyyy → ISO); PO amount is normalised to a number.
+
+**Customer Review Received drawer** (right-side, never a modal): values grouped
+by section (Customer Information, Sold To, Billing & Shipping, Subscription
+Details, Subscription Details Review, Terms & Conditions Review,
+Execution/Signature, Purchase Order), each showing **Current vs Returned** with a
+**New / Changed / Same / Empty** status and per-field **Apply / Ignore**.
+Subscription and T&C comments render as prominent comment cards. Bulk: **Apply all safe
+changes** (only blank-field → non-empty, i.e. status New), **Ignore all**,
+**Close**. A non-empty existing value is **never** overwritten without an
+explicit Apply. Applying updates the builder + live preview and recalculates
+readiness. **Signature images can't be imported** — the drawer shows a note to
+review the PDF manually; only the typed-name signature field reads back.
+
+Readback caveat: filling a PDF outside Quill does not sync back automatically —
+to include accepted changes in the **Final PDF**, apply them in the drawer (or
+type them into Quill) and **regenerate** the Final PDF.
 
 ## Confirmation modal
 
@@ -115,14 +162,19 @@ The build has no rasterizer, so these are manual on a machine with a PDF viewer.
   of the invoice"), **Due on receipt** (→ "upon receipt of the invoice"), and
   **Custom** free-text (completes "payable ___"). No raw
   `{{PAYMENT_TERM_LEGAL_TEXT}}` token ever appears in output.
-- **Payment Terms Comments / Terms & Conditions Comments (review aid):** two
-  optional review fields (`paymentTerms.comments`, `terms.comments`). In the
-  **Fillable PDF** both are **editable multiline** AcroForm text fields (bounded
-  font, tooltips) placed after the payment callout and after the Terms text
-  respectively — no native sticky-note/annotation. In **Final / preview** they
-  render as plain text **only when the app data has comments** (never an empty
-  box). The **DOCX** always includes both labelled areas (text or a blank ruled
-  line) since it is the redline artefact.
+- **Comments on Subscription Details / Terms & Conditions (review aid):** two
+  optional review fields (`subscription.comments` — renamed from the old
+  `paymentTerms.comments`, which still imports — and `terms.comments`). The
+  Subscription comment covers the whole section (start date, payment method,
+  billing period, term, payment terms). In the **Fillable PDF** both are
+  **editable multiline** AcroForm text fields (bounded font, tooltips) with a
+  subtle "save/download this PDF before sending it back" helper — no native
+  sticky-note/annotation. Fillable labels: **CUSTOMER COMMENTS ON SUBSCRIPTION
+  DETAILS, IF ANY** and **CUSTOMER COMMENTS ON TERMS & CONDITIONS, IF ANY**. In
+  **Final / preview** they render as plain text under **Subscription Details
+  Comments** / **Terms & Conditions Comments** **only when the app data has
+  comments** (never an empty box, no helper text). The **DOCX** always includes
+  both labelled areas (text or a blank ruled line) since it is the redline artefact.
 - **Page 3 — legal & signature:** Terms are professionally typeset — comfortable
   line-height (~1.5×), a clear gap **before** each numbered clause heading, a
   small gap under the heading, a visible paragraph-to-paragraph gap, and a
@@ -145,26 +197,30 @@ The build has no rasterizer, so these are manual on a machine with a PDF viewer.
 - **Page 4 — acceptance & PO** (when present): Commercial Summary card (Customer,
   Total prominent, Currency, Billing Period, Term, Start, Valid Through), PO
   card, "End of Order Form" marker, footer aligned, no large empty gap.
-- **Fillable fields:** signature/name/designation/signDate + PO fields editable,
-  bounds match the visual layout, tooltips on hover, tab order logical, PO radio
-  exclusive. **Subscription** adds `subscription.startDate` (text) and
-  `subscription.paymentMethod` (**dropdown**); the dropdown's selected value must
-  render at the **same size as the other field values** (≈9.5 pt — set explicitly
-  after `addToPage`, never auto-sized/oversized). Two **review comment** fields —
-  `paymentTerms.comments` and `terms.comments` — are **multiline**, bounded font
-  (~9 pt), with tooltips.
+- **Fillable fields:** customer-editable business/contact fields —
+  `customer.legalName`, `soldTo.name/email`, `billing.name/address` (multiline),
+  `shipping.name/address` (multiline) — plus `subscription.startDate` (text),
+  `subscription.paymentMethod` (**dropdown**), `subscription.comments` +
+  `terms.comments` (**multiline**), signature/name/designation/signDate, and PO
+  fields. Every value field renders at the **same size as the surrounding static
+  text** (≈9.5 pt; addresses ~8.5 pt; PO fields 10 pt — all set explicitly after
+  `addToPage`, never auto-sized/oversized). Only the signature line is
+  intentionally larger. Bounds match the visual layout, tooltips on hover, tab
+  order logical, PO radio exclusive.
 
 ## Review comments & readback (internal)
 
 - Both comment fields are **optional** and never affect readiness: no error, no
   warning, no score change when blank. When either has content, the Readiness
   panel shows a single neutral pass note, **"Customer review comments added."**
-- **Fillable PDF comments are for customer review.** If a customer types comments
-  directly into the Fillable PDF, Quill does **not** read them back — there is no
-  PDF import/readback flow yet.
-- **To include accepted comments in the Final PDF**, enter them into Quill (the
-  Subscription "Payment Terms Comments" and Terms "Customer Comments on Terms &
-  Conditions" fields) **before** generating the Final PDF.
+- **Fillable PDF comments are for customer review.** A customer-returned PDF can
+  be read back via **Import Response** — recognised values (including comments)
+  appear in the review drawer for Apply/Ignore. Filling a PDF does **not** sync
+  back automatically; you must import it.
+- **To include accepted comments in the Final PDF**, apply them in the review
+  drawer (or type them into Quill — the Subscription "Customer Comments on
+  Subscription Details" and Terms "Customer Comments on Terms & Conditions"
+  fields) and **regenerate** the Final PDF.
 - Future improvement: import filled PDF fields back into Quill.
 
 ## Compatibility matrix (spot-check per release)

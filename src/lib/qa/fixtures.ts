@@ -151,10 +151,10 @@ export const FIXTURES: Fixture[] = [
   {
     name: 'review-comments',
     description:
-      'Customer review comments on payment terms AND Terms & Conditions — render in Final PDF / preview, editable fields in Fillable.',
+      'Customer review comments on Subscription Details AND Terms & Conditions — render in Final PDF / preview, editable fields in Fillable.',
     data: (() => {
       const d = base()
-      d.paymentTermsComments =
+      d.subscriptionComments =
         'Customer requests Net 60 instead of Net 30; pending finance approval before signature.'
       d.termsComments =
         'Customer legal wants to negotiate the auto-renewal notice period in clause 4.'

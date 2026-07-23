@@ -184,10 +184,10 @@ export function OrderFormDocument({
             <Field label="Payment Method" value={data.subscription.paymentMethod} optional />
           </FieldRow>
           <p className="odoc-callout">{model.payableNote}</p>
-          {model.paymentTermsComments && (
+          {model.subscriptionComments && (
             <div className="odoc-comments">
-              <div className="odoc-comments-label">Payment Terms Comments</div>
-              <div className="odoc-comments-body">{model.paymentTermsComments}</div>
+              <div className="odoc-comments-label">Subscription Details Comments</div>
+              <div className="odoc-comments-body">{model.subscriptionComments}</div>
             </div>
           )}
         </Section>

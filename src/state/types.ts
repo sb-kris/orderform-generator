@@ -108,11 +108,13 @@ export type OrderFormData = {
     paymentTermCustom: string
   }
   /**
-   * Optional customer/reviewer comments on the payment terms. Never blocks
-   * export; renders in customer output only when non-empty and is an editable
-   * multiline field in the Fillable PDF (AcroForm field `paymentTerms.comments`).
+   * Optional customer/reviewer comments on the whole Subscription Details
+   * section (start date, payment method, billing period, term, payment terms).
+   * Never blocks export; renders in customer output only when non-empty and is
+   * an editable multiline field in the Fillable PDF (AcroForm field
+   * `subscription.comments`; legacy `paymentTerms.comments` still imports).
    */
-  paymentTermsComments: string
+  subscriptionComments: string
   /**
    * Optional customer/reviewer comments on the Terms & Conditions. Same policy
    * as `paymentTermsComments` — never blocks export, renders only when non-empty,
@@ -193,7 +195,7 @@ export const defaultData = (): OrderFormData => ({
     paymentTermDays: 30,
     paymentTermCustom: '',
   },
-  paymentTermsComments: '',
+  subscriptionComments: '',
   termsComments: '',
   signature: {
     customer: blankSignature(),

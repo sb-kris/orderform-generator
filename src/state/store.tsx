@@ -11,12 +11,11 @@ import {
 import {
   DEFAULT_LAYOUT_PREFS,
   defaultData,
-  emptyLine,
   type LayoutPrefs,
   type OrderFormData,
-  type ServiceLine,
 } from './types'
 import { parseNumber } from '@/lib/format'
+import { migrateOrderFormData } from './migrate'
 
 const STORAGE_KEY = 'quill-order-form-draft-v2'
 const STORAGE_TS_KEY = 'quill-order-form-draft-v2-savedAt'
@@ -45,6 +44,8 @@ type StoreValue = {
   data: OrderFormData
   update: (patch: (prev: OrderFormData) => OrderFormData) => void
   reset: () => void
+  /** Replace the whole draft with imported data (from a .quill.json file). */
+  importData: (next: OrderFormData) => void
   saveDraft: () => boolean
   loadDraft: () => boolean
   saveStatus: SaveStatus
@@ -122,6 +123,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   /**
+   * Replace the whole draft with imported data (e.g. from a `.quill.json`
+   * file). Marked unsaved so the user can choose to Save Locally, and the
+   * readiness dashboard returns to the calm state until re-checked.
+   */
+  const importData = useCallback((next: OrderFormData) => {
+    dispatch({ type: 'set', data: next })
+    setSaveStatus('unsaved')
+    setHasRunReadinessCheck(false)
+    try {
+      localStorage.removeItem(READINESS_KEY)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  /**
    * Returns false when the write failed (typically QuotaExceededError from
    * oversized image uploads) so the toolbar can tell the user instead of
    * showing a false "saved" confirmation.
@@ -144,46 +161,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) return false
       const parsed = JSON.parse(raw) as Partial<OrderFormData>
-      const base = defaultData()
-      const merged: OrderFormData = {
-        ...base,
-        ...parsed,
-        documentId: parsed.documentId ?? base.documentId,
-        currency: parsed.currency ?? base.currency,
-        customer: { ...base.customer, ...parsed.customer },
-        soldTo: { ...base.soldTo, ...parsed.soldTo },
-        services:
-          parsed.services && parsed.services.length
-            ? parsed.services.map((s: ServiceLine) => ({
-                id: s.id ?? crypto.randomUUID(),
-                description: s.description ?? '',
-                price: s.price ?? '',
-                quantity: s.quantity ?? '',
-                unit: s.unit ?? '', // backward-compat: drafts predating the unit field
-              }))
-            : Array.from({ length: 6 }, emptyLine),
-        billing: {
-          ...base.billing,
-          ...parsed.billing,
-          billTo: { ...base.billing.billTo, ...parsed.billing?.billTo },
-          shipTo: { ...base.billing.shipTo, ...parsed.billing?.shipTo },
-        },
-        subscription: { ...base.subscription, ...parsed.subscription },
-        paymentTermsComments: parsed.paymentTermsComments ?? base.paymentTermsComments,
-        termsComments: parsed.termsComments ?? base.termsComments,
-        customerLogo: parsed.customerLogo ?? base.customerLogo,
-        ignoredWarnings: parsed.ignoredWarnings ?? base.ignoredWarnings,
-        termOverrides: parsed.termOverrides ?? base.termOverrides,
-        signature: {
-          customer: { ...base.signature.customer, ...parsed.signature?.customer },
-          surveysparrow: {
-            ...base.signature.surveysparrow,
-            ...parsed.signature?.surveysparrow,
-          },
-        },
-        purchaseOrder: { ...base.purchaseOrder, ...parsed.purchaseOrder },
-      }
-      dispatch({ type: 'set', data: merged })
+      dispatch({ type: 'set', data: migrateOrderFormData(parsed) })
       setSaveStatus('saved')
       return true
     } catch {
@@ -309,6 +287,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     data,
     update,
     reset,
+    importData,
     saveDraft,
     loadDraft,
     saveStatus,

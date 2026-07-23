@@ -239,17 +239,17 @@ export function SubscriptionDetailsSection() {
       </div>
 
       <Field
-        label="Payment Terms Comments"
-        htmlFor="paymentTerms.comments"
-        hint="Use this only when the customer or internal reviewer requests changes to payment terms. It appears in the document only when filled, and stays editable in the Fillable PDF."
+        label="Customer Comments on Subscription Details"
+        htmlFor="subscription.comments"
+        hint="Use this only when the customer or internal reviewer requests changes to any subscription detail (start date, payment method, billing period, term, or payment terms). It appears in the document only when filled, and stays editable in the Fillable PDF."
       >
         <Textarea
-          id="paymentTerms.comments"
-          value={data.paymentTermsComments}
+          id="subscription.comments"
+          value={data.subscriptionComments}
           onChange={(e) =>
-            update((p) => ({ ...p, paymentTermsComments: e.target.value }))
+            update((p) => ({ ...p, subscriptionComments: e.target.value }))
           }
-          placeholder="Optional — add comments only if the payment terms require review."
+          placeholder="Optional — add comments only if the subscription details require review."
           maxLength={600}
           className="min-h-[64px]"
         />

@@ -169,7 +169,7 @@ export async function generateDocx(data: OrderFormData): Promise<Uint8Array> {
               }),
             ],
           }),
-          ...commentsBlock('Payment Terms Comments', m.paymentTermsComments),
+          ...commentsBlock('Subscription Details Comments', m.subscriptionComments),
           ...sectionHeading('06', 'Terms & Conditions'),
           ...termsParagraphs(buildTerms(data.subscription, data.termOverrides ?? {})),
           ...commentsBlock('Terms & Conditions Comments', m.termsComments),

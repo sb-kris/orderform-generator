@@ -492,7 +492,7 @@ export function runDocumentQa(data: OrderFormData): QaReport {
   // Payment-terms / T&C comments are purely a review aid. They never warn or
   // error; when present we surface one neutral, informational note.
   const hasReviewComments =
-    !!(data.paymentTermsComments || '').trim() || !!(data.termsComments || '').trim()
+    !!(data.subscriptionComments || '').trim() || !!(data.termsComments || '').trim()
   if (hasReviewComments) {
     add({
       id: 'review.comments',

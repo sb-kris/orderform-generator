@@ -3,9 +3,11 @@ import {
   Download,
   FileDown,
   FileClock,
+  FileJson,
+  FileInput,
+  FolderOpen,
   RotateCcw,
   Save,
-  Upload,
   FileType,
   CheckCircle2,
   AlertCircle,
@@ -19,6 +21,8 @@ import {
 import { useEffect, useState } from 'react'
 import { Button } from './ui/button'
 import { ExportConfirmationModal } from './qa/ExportConfirmationModal'
+import { ImportResponseDialog } from './review/ImportResponseDialog'
+import { CustomerReviewDrawer } from './review/CustomerReviewDrawer'
 import { useStore, clearDraft } from '@/state/store'
 import type { OrderFormData } from '@/state/types'
 import type { QaReport, ReadinessStatus } from '@/lib/qa/documentQa'
@@ -29,6 +33,14 @@ import {
   type ExportModeId,
 } from '@/lib/exports/exportModes'
 import { buildExportFileName } from '@/lib/exports/fileNaming'
+import { serializeDraftFile, draftFileName, parseDraftFile } from '@/lib/exports/draftFile'
+import {
+  readPdfFields,
+  buildReviewModel,
+  applyReviewItem,
+  type ReviewGroup,
+  type ReviewItem,
+} from '@/lib/exports/pdfReadback'
 import { cn } from '@/lib/cn'
 import { applyTheme, getStoredTheme, type Theme } from '@/lib/theme'
 
@@ -46,6 +58,8 @@ export function StickyToolbar({
 }) {
   const {
     data,
+    update,
+    importData,
     saveDraft,
     loadDraft,
     reset,
@@ -58,6 +72,12 @@ export function StickyToolbar({
   const [downloading, setDownloading] = useState<ExportModeId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme())
+
+  // Import / customer-review workflow state.
+  const [importOpen, setImportOpen] = useState(false)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewGroups, setReviewGroups] = useState<ReviewGroup[]>([])
+  const [reviewSource, setReviewSource] = useState<string>('')
 
   // Confirmation modal state.
   const [pendingMode, setPendingMode] = useState<ExportMode | null>(null)
@@ -103,6 +123,62 @@ export function StickyToolbar({
     clearDraft()
     notify('Form reset.', 'info')
   }
+
+  // ---- Portable draft + customer-response import ----------------------------
+
+  const doExportDraft = () => {
+    try {
+      const json = serializeDraftFile(data)
+      downloadText(json, draftFileName(data.customer.legalName), 'application/json')
+      notify('Draft exported as a portable .quill.json file.', 'success')
+    } catch {
+      notify('Could not export the draft file.', 'warning')
+    }
+  }
+
+  /** Route an uploaded file: .pdf → field readback + review drawer; else → draft import. */
+  const onImportFile = async (file: File) => {
+    const isPdf =
+      file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+    if (isPdf) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        const res = await readPdfFields(bytes)
+        if (!res.ok) {
+          notify(res.error, 'warning')
+          return
+        }
+        if (!res.recognized) {
+          notify('No recognizable order-form fields were found in this PDF.', 'warning')
+          return
+        }
+        const groups = buildReviewModel(data, res.values)
+        setReviewGroups(groups)
+        setReviewSource(file.name)
+        setReviewOpen(true)
+      } catch {
+        notify('Could not read this PDF.', 'warning')
+      }
+      return
+    }
+    // Draft file (.quill.json / .json)
+    try {
+      const text = await file.text()
+      const parsed = parseDraftFile(text)
+      if (!parsed.ok) {
+        notify(parsed.error, 'warning')
+        return
+      }
+      importData(parsed.data)
+      notify('Draft imported successfully. Save Locally to keep it in this browser.', 'success')
+    } catch {
+      notify('This does not look like a Quill draft file.', 'warning')
+    }
+  }
+
+  const applyReview = (item: ReviewItem) => update((prev) => applyReviewItem(prev, item))
+  const applyReviewAll = (items: ReviewItem[]) =>
+    update((prev) => items.reduce((d, it) => applyReviewItem(d, it), prev))
 
   // ---- Export flow ----------------------------------------------------------
 
@@ -204,14 +280,55 @@ export function StickyToolbar({
           {/* Draft · Export group · Utilities */}
           <div className="ml-auto flex shrink-0 items-center gap-2.5">
             <div className="hidden items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 md:flex">
-              <Button variant="ghost" size="sm" onClick={doLoad} className="h-8">
-                <Upload className="h-3.5 w-3.5" /> Load
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={doLoad}
+                className="h-8 w-8"
+                aria-label="Load Local Draft"
+                title="Load Local Draft — restore the draft saved in this browser"
+              >
+                <FolderOpen className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="sm" onClick={doSave} className="h-8">
-                <Save className="h-3.5 w-3.5" /> Save
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={doSave}
+                className="h-8 w-8"
+                aria-label="Save Locally"
+                title="Save Locally — save this draft in this browser"
+              >
+                <Save className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="sm" onClick={doReset} className="h-8">
-                <RotateCcw className="h-3.5 w-3.5" /> Reset
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={doExportDraft}
+                className="h-8 w-8"
+                aria-label="Export Draft"
+                title="Export Draft — download a portable .quill.json file to keep or share"
+              >
+                <FileJson className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setImportOpen(true)}
+                className="h-8 w-8"
+                aria-label="Import Response"
+                title="Import Response — upload an exported draft or a customer-returned fillable PDF"
+              >
+                <FileInput className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={doReset}
+                className="h-8 w-8"
+                aria-label="Reset"
+                title="Reset — clear all fields and remove the saved draft"
+              >
+                <RotateCcw className="h-4 w-4" />
               </Button>
             </div>
 
@@ -288,8 +405,10 @@ export function StickyToolbar({
                     transition={{ duration: 0.15 }}
                     className="absolute right-0 mt-1.5 w-56 rounded-lg border border-slate-200 bg-card p-1 shadow-pop"
                   >
-                    <MenuItem icon={<Upload className="h-3.5 w-3.5" />} label="Load Draft" onClick={() => { setMenuOpen(false); doLoad() }} />
-                    <MenuItem icon={<Save className="h-3.5 w-3.5" />} label="Save Draft" onClick={() => { setMenuOpen(false); doSave() }} />
+                    <MenuItem icon={<FolderOpen className="h-3.5 w-3.5" />} label="Load Local Draft" onClick={() => { setMenuOpen(false); doLoad() }} />
+                    <MenuItem icon={<Save className="h-3.5 w-3.5" />} label="Save Locally" onClick={() => { setMenuOpen(false); doSave() }} />
+                    <MenuItem icon={<FileJson className="h-3.5 w-3.5" />} label="Export Draft" onClick={() => { setMenuOpen(false); doExportDraft() }} />
+                    <MenuItem icon={<FileInput className="h-3.5 w-3.5" />} label="Import Response" onClick={() => { setMenuOpen(false); setImportOpen(true) }} />
                     <MenuItem icon={<RotateCcw className="h-3.5 w-3.5" />} label="Reset" onClick={() => { setMenuOpen(false); doReset() }} />
                     <div className="my-1 h-px bg-slate-100" />
                     <MenuItem icon={<FileClock className="h-3.5 w-3.5" />} label="Draft PDF" onClick={() => { setMenuOpen(false); requestExport('draft') }} />
@@ -314,6 +433,17 @@ export function StickyToolbar({
         exporting={downloading !== null}
         onConfirm={confirmExport}
         onReviewIssues={reviewIssues}
+      />
+
+      <ImportResponseDialog open={importOpen} onOpenChange={setImportOpen} onFile={onImportFile} />
+
+      <CustomerReviewDrawer
+        open={reviewOpen}
+        groups={reviewGroups}
+        sourceName={reviewSource}
+        onOpenChange={setReviewOpen}
+        onApply={applyReview}
+        onApplyAllSafe={applyReviewAll}
       />
 
       <div className="pointer-events-none fixed right-4 top-16 z-50 flex w-80 flex-col gap-2">
@@ -485,6 +615,18 @@ function exportSuccessMessage(mode: ExportMode): string {
     case 'docx':
       return 'Editable DOCX downloaded.'
   }
+}
+
+function downloadText(text: string, filename: string, mime: string) {
+  const blob = new Blob([text], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 function downloadBytes(bytes: Uint8Array, filename: string, mime: string) {

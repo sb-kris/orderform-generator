@@ -48,8 +48,8 @@ export type DocModel = {
   }
   /** One-line payment callout, single-sourced from the payment term. */
   payableNote: string
-  /** Optional payment-terms comments, trimmed. Empty string when none. */
-  paymentTermsComments: string
+  /** Optional Subscription Details comments, trimmed. Empty string when none. */
+  subscriptionComments: string
   /** Optional Terms & Conditions comments, trimmed. Empty string when none. */
   termsComments: string
   po: {
@@ -113,7 +113,7 @@ export function buildDocModel(data: OrderFormData): DocModel {
       paymentTermCustom: (sub.paymentTermCustom ?? '').trim(),
     },
     payableNote: payableNote(sub),
-    paymentTermsComments: (data.paymentTermsComments ?? '').trim(),
+    subscriptionComments: (data.subscriptionComments ?? '').trim(),
     termsComments: (data.termsComments ?? '').trim(),
     po: {
       required: data.purchaseOrder.required,
