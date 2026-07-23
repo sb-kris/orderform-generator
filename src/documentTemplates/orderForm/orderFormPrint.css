@@ -44,6 +44,31 @@
   color: rgb(71, 85, 105);
 }
 
+/* Optional payment-terms comments — shown only when the rep/customer added
+   notes, so a clean order form never carries an empty box. */
+.odoc-comments {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--odoc-line);
+  border-radius: 6px;
+  background: rgb(248, 250, 252);
+  break-inside: avoid;
+}
+.odoc-comments-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgb(100, 116, 139);
+}
+.odoc-comments-body {
+  font-size: 10.5px;
+  line-height: 1.55;
+  margin-top: 3px;
+  color: rgb(71, 85, 105);
+  white-space: pre-line;
+}
+
 /* Framed cards (billing/shipping, subscription, signature blocks). */
 .odoc-card {
   border: 1px solid var(--odoc-line);

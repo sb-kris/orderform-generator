@@ -29,7 +29,7 @@ import {
   wrapText,
   type Layout,
 } from './layout'
-import type { ImageAsset, OrderFormData, Signature } from '@/state/types'
+import { PAYMENT_METHODS, type ImageAsset, type OrderFormData, type Signature } from '@/state/types'
 import { buildDocModel, type DocModel } from '@/lib/docModel'
 import { formatDate } from '@/lib/format'
 import { buildTerms, type TermClause } from '@/lib/terms'
@@ -94,8 +94,14 @@ export async function renderOrderForm(
   renderSoldTo(layout, model)
   renderServices(layout, model)
   renderBillingShipping(layout, model)
-  renderSubscription(layout, model)
-  renderTerms(layout, buildTerms(data.subscription.paymentTermDays ?? 30, data.termOverrides ?? {}))
+  renderSubscription(layout, model, mode)
+  renderTerms(layout, buildTerms(data.subscription, data.termOverrides ?? {}))
+  renderCommentsBlock(layout, mode, {
+    label: 'CUSTOMER COMMENTS ON TERMS & CONDITIONS, IF ANY',
+    fieldName: 'terms.comments',
+    tooltip: 'Customer comments on Terms & Conditions, if any.',
+    comments: model.termsComments,
+  })
   renderExecutionAndPurchaseOrder(layout, data, model, mode, custSigImg, ssSigImg)
 
   drawFooters(layout)
@@ -280,10 +286,11 @@ function renderServices(l: Layout, m: DocModel) {
   drawSectionHeading(l, '03', 'Services')
 
   const cols = [
-    { label: 'Line Item', width: 288, align: 'left' as const },
+    { label: 'Line Item', width: 244, align: 'left' as const },
     { label: 'Price', width: 88, align: 'right' as const },
-    { label: 'Quantity', width: 60, align: 'center' as const },
-    { label: 'Sub-Total', width: CONTENT_W - 288 - 88 - 60, align: 'right' as const },
+    // Wider than a bare quantity so a 6-char unit (e.g. "1000 EMAILS") fits.
+    { label: 'Qty / Unit', width: 104, align: 'center' as const },
+    { label: 'Sub-Total', width: CONTENT_W - 244 - 88 - 104, align: 'right' as const },
   ]
 
   const headerH = 22
@@ -560,14 +567,35 @@ function drawAddressCard(
   }
 }
 
-function renderSubscription(l: Layout, m: DocModel) {
+function renderSubscription(l: Layout, m: DocModel, mode: Mode) {
+  const fillable = mode === 'fillable'
   drawSectionHeading(l, '05', 'Subscription Details')
-  drawLabeledFields(l, [
-    { label: 'Billing Period', value: m.subscription.billingPeriod, required: true },
-    { label: 'Subscription Term (Months)', value: m.subscription.termMonths, required: true },
-    { label: 'Start Date', value: m.subscription.startDate, required: true },
-    { label: 'Payment Method', value: m.subscription.paymentMethod, required: true },
-  ])
+  drawLabeledFields(
+    l,
+    [
+      { label: 'Billing Period', value: m.subscription.billingPeriod, required: true },
+      { label: 'Subscription Term (Months)', value: m.subscription.termMonths, required: true },
+      // Optional — editable in the Fillable PDF, blank pill (no placeholder) elsewhere.
+      {
+        label: 'Start Date',
+        value: m.subscription.startDate,
+        optional: true,
+        field: fillable
+          ? { name: 'subscription.startDate', kind: 'text', tooltip: 'Subscription start date (dd/mm/yyyy)' }
+          : undefined,
+      },
+      {
+        label: 'Payment Method',
+        value: m.subscription.paymentMethod,
+        optional: true,
+        field: fillable
+          ? { name: 'subscription.paymentMethod', kind: 'dropdown', options: PAYMENT_METHODS, tooltip: 'Select payment method' }
+          : undefined,
+      },
+    ],
+    2,
+    fillable,
+  )
   // Payment terms as a subtle callout (teal-tinted strip with an accent bar)
   // rather than a loose italic line — more scannable, still formal.
   ensureSpace(l, 26)
@@ -596,6 +624,96 @@ function renderSubscription(l: Layout, m: DocModel) {
     color: COLORS.slate700,
   })
   l.y = cy - calloutH - 6
+
+  renderCommentsBlock(l, mode, {
+    label: 'CUSTOMER COMMENTS ON PAYMENT TERMS, IF ANY',
+    fieldName: 'paymentTerms.comments',
+    tooltip: 'Customer comments on Payment Terms, if any.',
+    comments: m.paymentTermsComments,
+  })
+}
+
+/**
+ * Optional customer-review comment area, reused for Payment Terms and Terms &
+ * Conditions.
+ *
+ * - Fillable PDF: an editable multiline AcroForm text field is always drawn so
+ *   the customer can add comments during review. NOT a native sticky-note or
+ *   annotation — a plain multiline field, which is reliable across PDF viewers
+ *   and e-sign tools. Font size is set explicitly (matching the body text) so
+ *   the value never renders oversized.
+ * - Final / Draft: rendered as static plain text ONLY when comments exist, so a
+ *   customer-facing document never shows an empty review box.
+ */
+function renderCommentsBlock(
+  l: Layout,
+  mode: Mode,
+  opts: { label: string; fieldName: string; tooltip: string; comments: string },
+) {
+  const fillable = mode === 'fillable'
+  const { label, fieldName, tooltip, comments } = opts
+  if (!fillable && !comments) return
+
+  if (fillable) {
+    const boxH = 46
+    keepTogether(l, 16 + boxH + 8)
+    l.page.drawText(label, {
+      x: PAGE.marginX,
+      y: l.y - 9,
+      size: 6.5,
+      font: l.fonts.bold,
+      color: COLORS.slate500,
+    })
+    const boxTop = l.y - 14
+    drawRoundedRect(l.page, {
+      x: PAGE.marginX,
+      y: boxTop - boxH,
+      width: CONTENT_W,
+      height: boxH,
+      radius: 4,
+      color: COLORS.white,
+      borderColor: COLORS.tealSoft,
+      borderWidth: 0.8,
+    })
+    const form = l.doc.getForm()
+    const tf = form.createTextField(fieldName)
+    tf.enableMultiline()
+    if (comments) tf.setText(sanitizeText(comments))
+    tf.addToPage(l.page, {
+      x: PAGE.marginX + 2,
+      y: boxTop - boxH + 1,
+      width: CONTENT_W - 4,
+      height: boxH - 2,
+      borderWidth: 0,
+    })
+    tf.setFontSize(9) // after addToPage — the /DA exists by then
+    setFieldTooltip(tf, tooltip)
+    l.y = boxTop - boxH - 8
+    return
+  }
+
+  // Static (Final / Draft) — comments guaranteed non-empty here.
+  const bodyLines = wrapText(comments, l.fonts.regular, 8.75, CONTENT_W - 4)
+  keepTogether(l, 16 + bodyLines.length * 12 + 6)
+  l.page.drawText(label, {
+    x: PAGE.marginX,
+    y: l.y - 9,
+    size: 6.5,
+    font: l.fonts.bold,
+    color: COLORS.slate500,
+  })
+  l.y -= 14
+  bodyLines.forEach((ln) => {
+    l.page.drawText(ln, {
+      x: PAGE.marginX,
+      y: l.y - 9,
+      size: 8.75,
+      font: l.fonts.regular,
+      color: COLORS.slate700,
+    })
+    l.y -= 12
+  })
+  l.y -= 6
 }
 
 function renderTerms(l: Layout, terms: TermClause[]) {
@@ -1046,7 +1164,7 @@ function drawSignatureCard(
       label: 'DATE',
       value: formatDate(signature.date),
       fieldName: fillable && fieldPrefix ? `${fieldPrefix}.signDate` : undefined,
-      tooltip: 'Date signed',
+      tooltip: 'Customer signature date (dd/mm/yyyy)',
     },
   ]
   const rowH = 27

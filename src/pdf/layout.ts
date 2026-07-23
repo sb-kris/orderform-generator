@@ -1,11 +1,21 @@
-import { PDFDocument, PDFPage, rgb, type RGB } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFPage, PDFString, rgb, type RGB } from 'pdf-lib'
 import {
   loadFonts,
   loadPageOneBackground,
   loadSurveySparrowLogo,
   type PdfFonts,
 } from './assets'
-import type { PDFFont, PDFImage } from 'pdf-lib'
+import type { PDFField, PDFFont, PDFImage } from 'pdf-lib'
+
+/** Best-effort AcroForm tooltip (/TU). Never let it abort an export. */
+function setFieldTU(field: PDFField, text?: string) {
+  if (!text) return
+  try {
+    field.acroField.dict.set(PDFName.of('TU'), PDFString.of(text))
+  } catch {
+    /* tooltip is a nice-to-have */
+  }
+}
 
 /** US Letter, in points (1pt = 1/72"). */
 export const PAGE = {
@@ -414,10 +424,27 @@ export function drawSectionHeading(
   l.y = cy - circleR - 14
 }
 
+type LabeledFieldSpec = {
+  name: string
+  kind: 'text' | 'dropdown'
+  options?: string[]
+  tooltip?: string
+}
+
 export function drawLabeledFields(
   l: Layout,
-  entries: Array<{ label: string; value: string; required?: boolean; span?: 1 | 2 }>,
+  entries: Array<{
+    label: string
+    value: string
+    required?: boolean
+    span?: 1 | 2
+    /** Suppress the `{{Label}}` placeholder when blank (render an empty pill). */
+    optional?: boolean
+    /** When `fillable`, place this AcroForm field inside the pill instead of static text. */
+    field?: LabeledFieldSpec
+  }>,
   columns = 2,
+  fillable = false,
 ) {
   const colGap = 16
   const colWidth = (CONTENT_W - colGap * (columns - 1)) / columns
@@ -465,16 +492,46 @@ export function drawLabeledFields(
       borderColor: filled ? COLORS.slate200 : COLORS.tealSoft,
       borderWidth: 0.8,
     })
-    const displayText = filled
-      ? truncate(sanitizeText(e.value), l.fonts.medium, valueSize, width - 16)
-      : `{{${e.label.replace(/[^\w]+/g, '_')}}}`
-    l.page.drawText(displayText, {
-      x: x + 10,
-      y: pillY + 7,
-      size: valueSize,
-      font: filled ? l.fonts.medium : l.fonts.regular,
-      color: filled ? COLORS.slate950 : COLORS.teal,
-    })
+    if (fillable && e.field) {
+      // Customer-editable AcroForm field placed inside the pill.
+      const form = l.doc.getForm()
+      const rect = { x: x + 2, y: pillY + 1, width: width - 4, height: pillH - 2, borderWidth: 0 }
+      const v = e.value.trim()
+      if (e.field.kind === 'dropdown') {
+        const dd = form.createDropdown(e.field.name)
+        dd.addOptions(e.field.options ?? [])
+        if (v && (e.field.options ?? []).includes(v)) dd.select(v)
+        dd.addToPage(l.page, rect)
+        // Explicit font size AFTER addToPage (which creates the /DA entry). Without
+        // this, pdf-lib auto-sizes the dropdown text to fill the widget height,
+        // rendering the selected value comically large — match the other fields.
+        dd.setFontSize(valueSize)
+        setFieldTU(dd, e.field.tooltip)
+      } else {
+        const tf = form.createTextField(e.field.name)
+        if (v) tf.setText(sanitizeText(v))
+        tf.addToPage(l.page, rect)
+        tf.setFontSize(valueSize) // after addToPage — the /DA exists by then
+        setFieldTU(tf, e.field.tooltip)
+      }
+    } else {
+      // Static text. Optional-but-blank fields render an empty pill (never the
+      // `{{Label}}` placeholder), so review-stage PDFs stay customer-clean.
+      const displayText = filled
+        ? truncate(sanitizeText(e.value), l.fonts.medium, valueSize, width - 16)
+        : e.optional
+          ? ''
+          : `{{${e.label.replace(/[^\w]+/g, '_')}}}`
+      if (displayText) {
+        l.page.drawText(displayText, {
+          x: x + 10,
+          y: pillY + 7,
+          size: valueSize,
+          font: filled ? l.fonts.medium : l.fonts.regular,
+          color: filled ? COLORS.slate950 : COLORS.teal,
+        })
+      }
+    }
     col += span
     if (col >= columns) {
       col = 0
