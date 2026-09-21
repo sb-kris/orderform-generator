@@ -135,7 +135,7 @@ export function ServicesTable() {
                       <Input
                         value={line.unit}
                         onChange={(e) => setLine(line.id, { unit: e.target.value })}
-                        maxLength={6}
+                        maxLength={8}
                         className="h-8 text-center"
                         aria-label={`Unit for service line item ${i + 1}`}
                       />

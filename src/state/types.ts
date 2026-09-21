@@ -8,7 +8,7 @@ export type ServiceLine = {
   quantity: string
   /**
    * Optional, display-only unit/suffix appended to the quantity in the preview
-   * and exports (e.g. "GB", "mo", "EMAILS"). Max 6 chars, casing preserved,
+   * and exports (e.g. "GB", "mo", "SESSIONS"). Max 8 chars, casing preserved,
    * never affects calculations. Empty string when unused.
    */
   unit: string

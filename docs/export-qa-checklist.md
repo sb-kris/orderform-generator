@@ -175,7 +175,7 @@ The build has no rasterizer, so these are manual on a machine with a PDF viewer.
   Doc ID, background art readable under text, customer logo top-right (aspect
   preserved, not stretched), Customer Info / Sold To / Services table + Total.
 - **Services — Qty / Unit:** the Services table has a **Unit** field beside Qty
-  in the app (optional, max 6 chars, casing preserved). The customer-facing
+  in the app (optional, max 8 chars, casing preserved). The customer-facing
   **Qty / Unit** column shows the quantity with the unit appended (`50 GB`,
   `1000 EMAILS`, `12 mo`, or just `10` when blank) in the preview, all PDFs, the
   DOCX, and the HTML/CSS POC. Units are display-only — subtotal, total, and PO
