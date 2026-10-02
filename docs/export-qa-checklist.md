@@ -171,9 +171,20 @@ type them into Quill) and **regenerate** the Final PDF.
 
 The build has no rasterizer, so these are manual on a machine with a PDF viewer.
 
-- **Page 1 — branding:** accent stripe, SurveySparrow logo, CONFIDENTIAL pill +
-  Doc ID, background art readable under text, customer logo top-right (aspect
-  preserved, not stretched), Customer Info / Sold To / Services table + Total.
+- **Page backgrounds (brand design):** every page uses a full-bleed brand
+  design background — `public/cover-background.png` on page 1 (green banner) and
+  `public/page-background.png` on pages 2+ (white). The SurveySparrow **logo**
+  and the decorative outlines are **baked into the images**, so the app draws
+  none of those itself; it overlays only the **Doc ID**, **centred** in the top
+  band (white on the cover banner, dark slate on interior pages), and redraws
+  the thin teal accent **bottom bar** (cropped by the width-fit scaling). The
+  design carries **no Confidential pill** — "Confidential" appears in the footer
+  instead. To refresh the look, drop replacement PNGs at those paths — no code change.
+- **Page 1 — cover:** green banner (baked logo), Doc ID centred in white, the
+  **Service Order Form** title (no "SurveySparrow Inc" eyebrow — the logo is in
+  the banner) with clear spacing below the banner, customer logo top-right
+  (aspect preserved), then Customer Info / Sold To / Services on the white body.
+  Numbered sections carry extra spacing so they don't crowd each other.
 - **Services — Qty / Unit:** the Services table has a **Unit** field beside Qty
   in the app (optional, max 8 chars, casing preserved). The customer-facing
   **Qty / Unit** column shows the quantity with the unit appended (`50 GB`,

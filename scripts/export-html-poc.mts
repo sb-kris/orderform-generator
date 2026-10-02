@@ -122,8 +122,8 @@ async function main() {
     if (uri) { fontsInlined++; return `url(${uri})` }
     return m
   })
-  const bgUri = toDataUri(join(PUBLIC, 'page1-background.jpg'))
-  if (bgUri) bodyHtml = bodyHtml.split('/page1-background.jpg').join(bgUri)
+  const bgUri = toDataUri(join(PUBLIC, 'cover-background.png'))
+  if (bgUri) bodyHtml = bodyHtml.split('/cover-background.png').join(bgUri)
   log(`• Inlined ${fontsInlined} font refs${bgUri ? ' + page-1 background' : ''}.`)
 
   const page = `<!doctype html>

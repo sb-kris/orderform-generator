@@ -1,8 +1,8 @@
 import { PDFDocument, PDFName, PDFPage, PDFString, rgb, type RGB } from 'pdf-lib'
 import {
   loadFonts,
-  loadPageOneBackground,
-  loadSurveySparrowLogo,
+  loadCoverBackground,
+  loadPageBackground,
   type PdfFonts,
 } from './assets'
 import type { PDFField, PDFFont, PDFImage } from 'pdf-lib'
@@ -50,6 +50,8 @@ export const COLORS = {
   slate50: rgb(248 / 255, 250 / 255, 252 / 255),
 
   white: rgb(1, 1, 1),
+  /** The teal accent bar baked into the brand background designs (bottom edge). */
+  bar: rgb(12 / 255, 148 / 255, 136 / 255),
 }
 
 export type Layout = {
@@ -60,7 +62,9 @@ export type Layout = {
   y: number
   documentTitle: string
   documentId: string
-  ssLogo: PDFImage
+  /** Brand design backgrounds (logo / Confidential pill / decor are baked in). */
+  coverBg: PDFImage | null
+  pageBg: PDFImage | null
   customerLogo: PDFImage | null
 }
 
@@ -80,8 +84,8 @@ export async function createLayout(
   doc.setCreator('SurveySparrow')
 
   const fonts = await loadFonts(doc)
-  const ssLogo = await loadSurveySparrowLogo(doc)
-  const pageOneBackground = await loadPageOneBackground(doc)
+  const coverBg = await loadCoverBackground(doc)
+  const pageBg = await loadPageBackground(doc)
   let customerLogo: PDFImage | null = null
   if (customerLogoBytes && customerLogoBytes.byteLength > 0) {
     try {
@@ -102,11 +106,11 @@ export async function createLayout(
     y: PAGE.height - PAGE.marginTop,
     documentTitle: title,
     documentId,
-    ssLogo,
+    coverBg,
+    pageBg,
     customerLogo,
   }
-  drawPageOneDecor(layout, pageOneBackground)
-  drawHeader(layout)
+  drawPageChrome(layout, true) // page 1 = cover
   return layout
 }
 
@@ -115,7 +119,7 @@ export function newPage(l: Layout) {
   l.pages.push(p)
   l.page = p
   l.y = PAGE.height - PAGE.marginTop
-  drawHeader(l)
+  drawPageChrome(l, false) // interior page
 }
 
 export function ensureSpace(l: Layout, needed: number) {
@@ -126,135 +130,61 @@ export function keepTogether(l: Layout, needed: number) {
   if (l.y - needed < PAGE.marginBottom + 20) newPage(l)
 }
 
-// -------- Page-1 decoration -------------------------------------------------
+// -------- Page chrome (brand design background + Doc ID) --------------------
+
+/** Height (pt) of the teal accent bar baked into the design (14px of 2000). */
+const BAR_H = (14 / 2000) * PAGE.height
 
 /**
- * Background treatment for the cover page. Drawn before all content so text
- * always sits on top.
+ * Lay the brand design background for a page and overlay the Doc ID. The
+ * design images bake in the SurveySparrow logo, the Confidential pill and the
+ * decorative outlines, so the renderer draws none of those itself.
  *
- * - When `public/page1-background.png` exists it is drawn across the full
- *   page at low opacity (asset should itself be light).
- * - Otherwise a restrained vector accent is drawn: two large, very light
- *   brand-teal discs bleeding off the top-right corner. Enough to feel
- *   designed, never enough to compete with the legal copy.
+ * - Cover (page 1): green-banner design; Doc ID in white over the banner.
+ * - Interior (pages 2+): white design; Doc ID in dark slate.
+ *
+ * Images are A4 aspect; the page is US Letter, so the image is scaled to the
+ * page WIDTH and anchored to the TOP (keeping the banner/logo crisp and
+ * undistorted). The white body fills the middle and the thin bottom accent bar
+ * — cropped by that scaling — is redrawn at the page's bottom edge.
  */
-function drawPageOneDecor(l: Layout, background: PDFImage | null) {
+function drawPageChrome(l: Layout, isCover: boolean) {
   const page = l.page
-  if (background) {
-    // Full-bleed cover: scale to page width, anchor to the top so the
-    // strongest color (top corners of the asset) frames the header while the
-    // near-white centre keeps body copy fully readable.
-    const scale = PAGE.width / background.width
-    page.drawImage(background, {
-      x: 0,
-      y: PAGE.height - background.height * scale,
-      width: PAGE.width,
-      height: background.height * scale,
-      opacity: 0.95,
-    })
-    return
+  const bg = isCover ? l.coverBg : l.pageBg
+  if (bg) {
+    const scale = PAGE.width / bg.width // fill width
+    const h = bg.height * scale
+    page.drawImage(bg, { x: 0, y: PAGE.height - h, width: PAGE.width, height: h })
+  } else if (isCover) {
+    // Fallback so the white Doc ID stays visible without the asset.
+    page.drawRectangle({ x: 0, y: PAGE.height - 64, width: PAGE.width, height: 64, color: COLORS.tealDeep })
   }
-  page.drawCircle({
-    x: PAGE.width + 30,
-    y: PAGE.height + 20,
-    size: 190,
-    color: COLORS.teal,
-    opacity: 0.05,
-  })
-  page.drawCircle({
-    x: PAGE.width - 50,
-    y: PAGE.height + 60,
-    size: 130,
-    color: COLORS.purple,
-    opacity: 0.04,
-  })
+  // Redraw the accent bar cropped off the bottom by the width-fit scaling.
+  page.drawRectangle({ x: 0, y: 0, width: PAGE.width, height: BAR_H, color: COLORS.bar })
+  drawDocId(l, isCover)
 }
 
-// -------- Header -------------------------------------------------------------
-
-function drawHeader(l: Layout) {
-  drawAccentStripe(l.page)
-  drawLogo(l)
-  drawHeaderMeta(l)
-}
-
-function drawAccentStripe(page: PDFPage) {
-  const y = PAGE.height - 3
-  const segments = [
-    { c: COLORS.tealBright, w: 0.32 },
-    { c: COLORS.teal, w: 0.28 },
-    { c: COLORS.purpleLight, w: 0.22 },
-    { c: COLORS.purple, w: 0.18 },
-  ]
-  let x = 0
-  segments.forEach((s) => {
-    const w = PAGE.width * s.w
-    page.drawRectangle({ x, y, width: w, height: 3, color: s.c })
-    x += w
-  })
-}
-
-function drawLogo(l: Layout) {
-  const targetH = 24
-  const ratio = l.ssLogo.width / l.ssLogo.height
-  l.page.drawImage(l.ssLogo, {
-    x: PAGE.marginX,
-    y: PAGE.height - 52,
-    width: targetH * ratio,
-    height: targetH,
-  })
-}
-
-/** CONFIDENTIAL pill + Doc ID, right-aligned and vertically centred on the logo. */
-function drawHeaderMeta(l: Layout) {
-  const pillText = 'CONFIDENTIAL'
-  const pillSize = 7.5
-  const pillTextW = l.fonts.bold.widthOfTextAtSize(pillText, pillSize)
-  const pillW = pillTextW + 20
-  const pillH = 18
-  const pillX = PAGE.width - PAGE.marginX - pillW
-  const pillY = PAGE.height - 46
-  drawRoundedRect(l.page, {
-    x: pillX,
-    y: pillY,
-    width: pillW,
-    height: pillH,
-    radius: 9,
-    borderColor: COLORS.slate300,
-    borderWidth: 0.7,
-    color: COLORS.white,
-  })
-  l.page.drawText(pillText, {
-    x: pillX + 10,
-    y: pillY + 5.5,
-    size: pillSize,
-    font: l.fonts.bold,
-    color: COLORS.slate700,
-  })
-
+/**
+ * Doc ID, right-aligned in the top band and vertically level with the baked
+ * SurveySparrow logo. White over the cover banner, dark slate on the interior
+ * pages. ("Confidential" lives in the footer, so the top-right carries only
+ * the Doc ID.)
+ */
+function drawDocId(l: Layout, isCover: boolean) {
   const label = 'Doc ID'
   const id = l.documentId
   const idSize = 8
+  const gap = 5
   const idW = l.fonts.bold.widthOfTextAtSize(id, idSize)
   const labelW = l.fonts.regular.widthOfTextAtSize(label, idSize)
-  const startX = PAGE.width - PAGE.marginX - (labelW + 5 + idW)
-  const idY = pillY - 14
-  // slate700 (not 500) so the label stays readable over the page-1
-  // background art in the top-right corner.
-  l.page.drawText(label, {
-    x: startX,
-    y: idY,
-    size: idSize,
-    font: l.fonts.regular,
-    color: COLORS.slate700,
-  })
-  l.page.drawText(id, {
-    x: startX + labelW + 5,
-    y: idY,
-    size: idSize,
-    font: l.fonts.bold,
-    color: COLORS.slate950,
-  })
+  const startX = PAGE.width - PAGE.marginX - (labelW + gap + idW) // right-aligned
+  // Baseline chosen so the text's visual middle lines up with the baked logo's
+  // vertical centre (measured at PDF y ≈ 757 in the cover banner).
+  const y = PAGE.height - 38
+  const labelColor = isCover ? COLORS.white : COLORS.slate600
+  const idColor = isCover ? COLORS.white : COLORS.slate950
+  l.page.drawText(label, { x: startX, y, size: idSize, font: l.fonts.regular, color: labelColor })
+  l.page.drawText(id, { x: startX + labelW + gap, y, size: idSize, font: l.fonts.bold, color: idColor })
 }
 
 // -------- Footer -------------------------------------------------------------
@@ -389,7 +319,10 @@ export function drawSectionHeading(
   continuation = false,
 ) {
   ensureSpace(l, 34)
-  l.y -= 4
+  // Breathing room before each numbered section so sections don't crowd each
+  // other. (Continuation headers land at the top of a fresh page, so the small
+  // gap there just reads as top padding.)
+  l.y -= 12
   const y = l.y
   const circleR = 10
   const cx = PAGE.marginX + circleR

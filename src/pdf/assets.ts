@@ -19,12 +19,14 @@
  * has correct ligature metadata — verified by rendering the terms text
  * through PDFium and checking "different"/"effect" pixel output.
  *
- * Page-1 background
- * -----------------
- * `loadPageOneBackground` looks for `public/page1-background.png`. When the
- * marketing/brand team supplies an approved asset, dropping it in `public/`
- * makes it appear behind page 1 at low opacity — no code change needed.
- * Absent that file, the renderer draws a subtle vector accent instead.
+ * Page backgrounds
+ * ----------------
+ * The brand team supplies two full-page design backgrounds (logo, Confidential
+ * pill, decorative outlines and the bottom accent bar are all baked in):
+ *   - `public/cover-background.png` — the green-banner cover (page 1)
+ *   - `public/page-background.png`  — the white interior page (pages 2+)
+ * The renderer lays these full-bleed and draws its own chrome (logo / pill /
+ * accent stripe) no more. Absent the files it falls back to a plain page.
  */
 import fontkit from '@pdf-lib/fontkit'
 import type { PDFDocument, PDFFont, PDFImage } from 'pdf-lib'
@@ -108,17 +110,19 @@ export async function loadSurveySparrowLogo(doc: PDFDocument): Promise<PDFImage>
   return doc.embedPng(await fetchBytes('/surveysparrow-logo.png'))
 }
 
-/** Optional page-1 background. Returns null when no asset is deployed. */
-export async function loadPageOneBackground(
-  doc: PDFDocument,
-): Promise<PDFImage | null> {
+/** Cover (page 1) design background. Null when the asset isn't deployed. */
+export async function loadCoverBackground(doc: PDFDocument): Promise<PDFImage | null> {
   try {
-    return await doc.embedJpg(await fetchBytes('/page1-background.jpg'))
+    return await doc.embedPng(await fetchBytes('/cover-background.png'))
   } catch {
-    /* fall through to PNG */
+    return null
   }
+}
+
+/** Interior (pages 2+) design background. Null when the asset isn't deployed. */
+export async function loadPageBackground(doc: PDFDocument): Promise<PDFImage | null> {
   try {
-    return await doc.embedPng(await fetchBytes('/page1-background.png'))
+    return await doc.embedPng(await fetchBytes('/page-background.png'))
   } catch {
     return null
   }

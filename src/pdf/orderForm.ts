@@ -215,15 +215,10 @@ function decodeDataUrl(url: string): { bytes: Uint8Array; mime: string } | null 
 // -------- Title block --------------------------------------------------------
 
 function drawTitleBlock(l: Layout) {
-  l.page.drawText('SURVEYSPARROW INC', {
-    x: PAGE.marginX,
-    y: l.y - 2,
-    size: 8,
-    font: l.fonts.display,
-    color: COLORS.teal,
-  })
-  l.y -= 10
-
+  // The SurveySparrow logo is baked into the cover banner above, so the cover
+  // opens straight with the document title (no "SURVEYSPARROW INC" eyebrow).
+  // Drop the title down so it clears the banner with comfortable breathing room.
+  l.y -= 22
   l.page.drawText('Service Order Form', {
     x: PAGE.marginX,
     y: l.y - 24,
